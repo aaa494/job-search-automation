@@ -1,0 +1,20 @@
+# systemd service for daily auto-run
+# Install: sudo cp scheduler.service /etc/systemd/system/job-search.service
+#          sudo systemctl enable job-search
+#          sudo systemctl start job-search
+
+[Unit]
+Description=Job Search Automation Scheduler
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/root/job-search-automation
+ExecStart=/usr/bin/python3 scheduler.py
+Restart=on-failure
+RestartSec=60
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
