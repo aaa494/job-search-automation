@@ -31,40 +31,65 @@ Searches LinkedIn, Indeed, We Work Remotely, and Dice every day — scores each 
 
 ---
 
-## Setup (one-time, ~10 minutes)
+## Setup (one-time, ~15 minutes)
 
-### 1. Clone and install
+### Step 1 — Clone and install
 
 ```bash
 git clone https://github.com/aaa494/job-search-automation.git
 cd job-search-automation
 bash setup.sh
-source .venv/bin/activate
 ```
 
-### 2. Add your Anthropic API key
+This creates a Python virtual environment, installs all dependencies, and downloads the Chromium browser.
 
-Open `.env` and fill in:
+### Step 2 — Add your API key
+
+Copy the env template and open it:
+```bash
+cp .env.example .env
+open .env          # opens in TextEdit, or use any editor
+```
+
+Fill in your Anthropic API key (required):
 ```
 ANTHROPIC_API_KEY=sk-ant-your-key-here
 ```
 
-### 3. Fill in your resume
+Get a key at [console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key.
 
-Edit `resume/base_resume.json` with your real information.  
-The file is fully commented — fill in personal info, skills, experience, education, certifications.
+### Step 3 — Fill in your resume
 
-### 4. Customize job search (optional)
-
-Edit `config.py`:
-```python
-SEARCH_CONFIG = {
-    "job_titles": ["DevOps Engineer", "Platform Engineer", ...],
-    "min_relevance_score": 70,    # skip jobs below this (0-100)
-    "max_applications_per_run": 8,
-    "require_review": True,       # ask before each submission
-}
+```bash
+open resume/base_resume.json
 ```
+
+Edit with your real name, contact info, skills, experience, education, certifications.  
+The file format follows the existing structure — just replace the placeholder values.
+
+### Step 4 — Test it (no applications submitted)
+
+```bash
+source .venv/bin/activate
+python main.py --dry-run
+```
+
+A browser window will open. Log in to LinkedIn via Google, press ENTER in the terminal.  
+The script finds 1 job, scores it, adapts your resume, generates a PDF + cover letter.  
+Nothing is submitted. Check `output/` to see the generated files.
+
+### Step 5 — Enable auto-start on Mac boot (recommended)
+
+```bash
+bash macos_autostart.sh install
+```
+
+Done. The job search now runs automatically every day at 09:00.  
+If your Mac was off at 09:00, it runs as soon as you turn it on and notifies you via Telegram.
+
+### Step 6 (optional) — Set up Telegram and Google Drive
+
+See the sections below for Telegram notifications and Google Drive backup.
 
 ---
 

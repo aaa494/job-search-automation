@@ -258,7 +258,7 @@ async def process_job(
     return success
 
 
-async def run(mode: str = "review", dry_run_limit: int = 1):
+async def run(mode: str = "review", dry_run_limit: int = 1, max_apply_override: int = None):
     console.print(Panel.fit(
         f"[bold cyan]Job Search Automation[/bold cyan]\n"
         f"Roles: [white]{', '.join(SEARCH_CONFIG['job_titles'][:4])} +more[/white]\n"
@@ -308,7 +308,7 @@ async def run(mode: str = "review", dry_run_limit: int = 1):
 
     # ── Process jobs ──────────────────────────────────────────────────────────
     applied = 0
-    max_apply = SEARCH_CONFIG["max_applications_per_run"]
+    max_apply = max_apply_override if max_apply_override is not None else SEARCH_CONFIG["max_applications_per_run"]
 
     limit = dry_run_limit if mode == "dry_run" else len(all_jobs)
 
@@ -386,7 +386,14 @@ def main():
 
     if "--auto" in args:
         # Used by scheduler — no manual review prompts
-        asyncio.run(run(mode="auto"))
+        limit = None
+        for a in args:
+            if a.startswith("--limit="):
+                try:
+                    limit = int(a.split("=", 1)[1])
+                except ValueError:
+                    pass
+        asyncio.run(run(mode="auto", max_apply_override=limit))
         return
 
     # Default: full run with review before each application

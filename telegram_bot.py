@@ -35,12 +35,13 @@ DB_PATH = "jobs.db"
 
 # Commands shown in Telegram's / dropdown
 COMMANDS = [
-    ("helpjob", "Show all available commands"),
-    ("stats",   "Application statistics and recent jobs"),
-    ("run",     "Start a job search run now"),
-    ("stop",    "Stop the current job search run"),
+    ("helpjob", "List all commands"),
+    ("test",    "Find 1 real job and apply now (test mode)"),
+    ("run",     "Start full job search (up to 8 applications)"),
+    ("stop",    "Stop the current run"),
+    ("stats",   "Application stats and recent jobs"),
     ("report",  "Latest run summary"),
-    ("status",  "Check if scheduler is running"),
+    ("status",  "Is the scheduler running?"),
 ]
 
 _run_process: subprocess.Popen | None = None
@@ -135,28 +136,41 @@ def handle_stats() -> str:
         return f"Error reading stats: {e}"
 
 
-def handle_run() -> str:
+def _start_run(args: list[str], label: str) -> str:
     global _run_process
     if _run_process and _run_process.poll() is None:
         return "⚠️ A run is already in progress. Use /stop to cancel it first."
-
     try:
         venv_python = Path(".venv/bin/python")
         python = str(venv_python) if venv_python.exists() else sys.executable
         _run_process = subprocess.Popen(
-            [python, "main.py", "--auto"],
+            [python, "main.py"] + args,
             cwd=Path(__file__).parent,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         return (
-            "🚀 <b>Job search started!</b>\n"
+            f"🚀 <b>{label}</b>\n"
             f"PID: {_run_process.pid}\n"
-            "You'll get notifications as jobs are found and applied.\n"
+            "You'll get Telegram notifications as jobs are found and applied.\n"
             "Use /stop to cancel."
         )
     except Exception as e:
         return f"❌ Failed to start: {e}"
+
+
+def handle_test() -> str:
+    return _start_run(
+        ["--auto", "--limit=1"],
+        "Test run started — finding and applying to 1 job.",
+    )
+
+
+def handle_run() -> str:
+    return _start_run(
+        ["--auto"],
+        "Full job search started — up to 8 applications.",
+    )
 
 
 def handle_stop() -> str:
@@ -223,9 +237,10 @@ HANDLERS = {
     "/helpjob": handle_helpjob,
     "/start":   handle_helpjob,
     "/help":    handle_helpjob,
-    "/stats":   handle_stats,
+    "/test":    handle_test,
     "/run":     handle_run,
     "/stop":    handle_stop,
+    "/stats":   handle_stats,
     "/report":  handle_report,
     "/status":  handle_status,
 }
