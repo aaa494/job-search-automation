@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ personal.name }} – Resume</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.5;
+    color: #111;
+    background: #fff;
+    padding: 28px 36px;
+    max-width: 820px;
+    margin: 0 auto;
+  }
+
+  /* ── Header ── */
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+  .header-left h1 { font-size: 21pt; font-weight: 700; color: #111; letter-spacing: -0.3px; }
+  .header-left .title { font-size: 11pt; color: #444; font-weight: 400; margin-top: 3px; }
+  .header-right { text-align: right; font-size: 9.5pt; color: #444; line-height: 1.8; }
+  .header-right a { color: #111; text-decoration: none; }
+
+  /* ── Divider ── */
+  .divider { border: none; border-top: 1.5px solid #111; margin-bottom: 13px; }
+
+  /* ── Section ── */
+  .section { margin-bottom: 14px; }
+  .section-title {
+    font-size: 9.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.4px;
+    color: #111;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 3px;
+    margin-bottom: 9px;
+  }
+
+  /* ── Summary ── */
+  .summary { color: #222; font-size: 10.5pt; }
+
+  /* ── Skills — two CSS columns, flows naturally, no gaps ── */
+  .skills-cols {
+    column-count: 2;
+    column-gap: 28px;
+    column-fill: balance;
+  }
+  .skill-row {
+    font-size: 9.8pt;
+    margin-bottom: 3px;
+    break-inside: avoid;
+  }
+  .skill-label { font-weight: 700; color: #111; }
+  .skill-value { color: #333; }
+
+  /* ── Experience ── */
+  .job { margin-bottom: 13px; }
+  .job-header { display: flex; justify-content: space-between; align-items: baseline; }
+  .job-title { font-weight: 700; font-size: 10.8pt; color: #111; }
+  .job-company { font-weight: 400; color: #333; font-size: 10.5pt; }
+  .job-dates { font-size: 9.5pt; color: #555; white-space: nowrap; }
+  .job ul { margin-top: 4px; padding-left: 16px; }
+  .job ul li { font-size: 10pt; color: #222; margin-bottom: 2px; }
+
+  /* ── Education ── */
+  .edu-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
+  .edu-degree { font-weight: 700; color: #111; }
+  .edu-school { font-weight: 400; color: #444; }
+  .edu-year { font-size: 9.5pt; color: #555; white-space: nowrap; }
+
+  /* ── Certifications ── */
+  .cert-list { list-style: none; column-count: 2; column-gap: 20px; }
+  .cert-list li { font-size: 10pt; margin-bottom: 3px; padding-left: 10px; position: relative; break-inside: avoid; }
+  .cert-list li::before { content: "–"; position: absolute; left: 0; color: #555; }
+
+  /* ── Projects ── */
+  .project { margin-bottom: 8px; }
+  .project-name { font-weight: 700; color: #111; }
+  .project-name a { color: #111; text-decoration: none; }
+  .project-desc { font-size: 9.8pt; color: #333; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-left">
+    <h1>{{ personal.name }}</h1>
+    <div class="title">{{ personal.title }}</div>
+  </div>
+  <div class="header-right">
+    <div>{{ personal.email }}</div>
+    <div>{{ personal.phone }}</div>
+    <div>{{ personal.location }}</div>
+    {% if personal.linkedin %}<div><a href="{{ personal.linkedin }}">LinkedIn</a></div>{% endif %}
+    {% if personal.github %}<div><a href="{{ personal.github }}">GitHub</a></div>{% endif %}
+    {% if personal.website %}<div><a href="{{ personal.website }}">Portfolio</a></div>{% endif %}
+  </div>
+</div>
+<hr class="divider">
+
+<!-- SUMMARY -->
+{% if summary %}
+<div class="section">
+  <div class="section-title">Professional Summary</div>
+  <div class="summary">{{ summary }}</div>
+</div>
+{% endif %}
+
+<!-- SKILLS -->
+<div class="section">
+  <div class="section-title">Technical Skills</div>
+  <div class="skills-cols">
+    {% for category, items in skills.items() %}
+    <div class="skill-row">
+      <span class="skill-label">{{ category | replace('_', ' ') | title }}:</span>
+      <span class="skill-value"> {{ items | join(', ') }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- EXPERIENCE -->
+<div class="section">
+  <div class="section-title">Professional Experience</div>
+  {% for job in experience %}
+  <div class="job">
+    <div class="job-header">
+      <div>
+        <span class="job-title">{{ job.title }}</span>
+        <span style="color:#888; font-weight:400;"> &nbsp;·&nbsp; </span>
+        <span class="job-company">{{ job.company }}</span>
+      </div>
+      <div class="job-dates">{{ job.start }} – {{ job.end }}</div>
+    </div>
+    <ul>
+      {% for bullet in job.bullets %}
+      <li>{{ bullet }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- EDUCATION -->
+<div class="section">
+  <div class="section-title">Education</div>
+  {% for edu in education %}
+  <div class="edu-row">
+    <div>
+      <span class="edu-degree">{{ edu.degree }}</span>
+      &nbsp;·&nbsp;
+      <span class="edu-school">{{ edu.institution }}</span>
+    </div>
+    <div class="edu-year">{{ edu.year }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- CERTIFICATIONS -->
+{% if certifications %}
+<div class="section">
+  <div class="section-title">Certifications</div>
+  <ul class="cert-list">
+    {% for cert in certifications %}
+    <li>{{ cert }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<!-- PROJECTS -->
+{% if projects %}
+<div class="section">
+  <div class="section-title">Notable Projects</div>
+  {% for proj in projects %}
+  <div class="project">
+    <div class="project-name">
+      {% if proj.url %}<a href="{{ proj.url }}">{{ proj.name }}</a>{% else %}{{ proj.name }}{% endif %}
+      &nbsp;<span style="font-weight:400; font-size:9.5pt; color:#666;">— {{ proj.tech | join(', ') }}</span>
+    </div>
+    <div class="project-desc">{{ proj.description }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+</body>
+</html>

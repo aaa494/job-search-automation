@@ -1,0 +1,95 @@
+{
+  "personal": {
+    "name": "Aidarbek A.",
+    "title": "DevOps / Cloud Engineer",
+    "email": "aidarbek.a@yahoo.com",
+    "phone": "773.757.2279",
+    "location": "Chicago, IL (Green Card Holder — open to remote US positions)",
+    "linkedin": "",
+    "github": "",
+    "website": ""
+  },
+  "summary": "DevOps Engineer with 7 years of experience on AWS, Azure, and GCP. Built and maintained Kubernetes clusters, Terraform infrastructure, and CI/CD pipelines at Jack Henry (fintech) and Akuna Capital (trading). Holds CKA, CKAD, and Terraform Associate certifications. Green Card holder, open to remote US positions.",
+  "skills": {
+    "cloud": ["AWS", "Azure", "GCP", "Oracle Cloud"],
+    "iac_config": ["Terraform", "Ansible", "Pulumi", "CloudFormation", "HCL"],
+    "cicd": ["GitHub Actions", "ArgoCD", "Jenkins", "Azure DevOps", "GitOps", "Travis CI"],
+    "containers": ["Kubernetes", "Docker", "Helm", "EKS", "GKE", "Velero"],
+    "monitoring": ["Datadog", "Prometheus", "Grafana", "Sumo Logic"],
+    "scripting": ["Python", "Bash"],
+    "databases": ["PostgreSQL", "MongoDB", "Azure SQL", "MySQL", "Amazon RDS", "DynamoDB", "Liquibase"],
+    "security": ["HashiCorp Vault", "IAM", "RBAC", "Trivy", "KMS", "SSL/TLS", "Secret Manager"],
+    "networking": ["VPC", "Load Balancing", "DNS", "CDN", "Network Security Groups"],
+    "version_control": ["Git", "GitHub", "GitLab"],
+    "os": ["Linux (RedHat, CentOS, Ubuntu)"]
+  },
+  "experience": [
+    {
+      "title": "DevOps Engineer",
+      "company": "Jack Henry",
+      "location": "Remote",
+      "start": "April 2022",
+      "end": "present",
+      "bullets": [
+        "Built and maintained multi-region Kubernetes clusters with Helm charts for a financial services platform, handling zero-downtime deployments and pod lifecycle management",
+        "Designed Terraform infrastructure using reusable modules, remote state backends, and workspaces to manage AWS and Azure environments consistently across dev, staging, and prod",
+        "Built CI/CD pipelines with GitHub Actions and ArgoCD using GitOps — reduced release cycle from weekly to daily with no increase in incidents",
+        "Set up HashiCorp Vault for secrets management with RBAC and automated secret rotation across all Kubernetes workloads",
+        "Deployed Datadog, Prometheus, and Grafana for full-stack observability — set up dashboards, alert routing, and runbooks that cut mean time to resolution on production incidents",
+        "Integrated Trivy container scanning and Kubernetes RBAC policies into CI/CD to maintain SOC 2 and PCI DSS compliance",
+        "Implemented Velero for Kubernetes backup and disaster recovery, tested restore procedures across three environments",
+        "Administered MongoDB Atlas clusters including replica sets, index optimization, and automated backups for high-traffic applications"
+      ]
+    },
+    {
+      "title": "DevOps Engineer",
+      "company": "SAP America",
+      "location": "Remote",
+      "start": "December 2020",
+      "end": "March 2022",
+      "bullets": [
+        "Built and maintained Terraform modules for the SAP email service on AWS, managing VPCs, ECS clusters, and RDS instances as code",
+        "Deployed fault-tolerant Kubernetes clusters on Gardener, AWS, and GCP across multiple regions with automated failover",
+        "Set up ArgoCD for GitOps-based continuous delivery, cutting deployment lead time and removing manual release steps",
+        "Configured full AWS email infrastructure (SES, SNS, S3, Lambda) with centralized log aggregation in Sumo Logic",
+        "Used Pulumi with Python for infrastructure automation where team requirements did not allow Terraform",
+        "Built and maintained Helm charts for all Kubernetes applications, standardizing deployment configuration across teams",
+        "Added Trivy container scanning to CI pipelines and ran remediation cycles to keep vulnerability counts near zero",
+        "Trained an external team of 5 on Terraform and Ansible, getting them from manual provisioning to full IaC in 3 months"
+      ]
+    },
+    {
+      "title": "Cloud Engineer",
+      "company": "Akuna Capital",
+      "location": "Chicago, IL",
+      "start": "September 2018",
+      "end": "November 2020",
+      "bullets": [
+        "Deployed and scaled Docker containers across Kubernetes namespaces for a high-frequency trading platform, managing resource limits and pod scheduling",
+        "Built AWS network infrastructure with Terraform — VPCs, subnets, security groups, and load balancers managed entirely as code",
+        "Set up Prometheus and Grafana on Kubernetes with custom dashboards for application latency, error rate, and infrastructure metrics",
+        "Managed IAM roles and policies across AWS accounts, enforced least-privilege access for all workloads and engineers",
+        "Maintained AWS infrastructure including patching, backup schedules, and high-availability configurations for trading systems",
+        "Handled GitHub repository structure, branch protection rules, and access permissions across multiple engineering teams",
+        "Performed Linux system administration — OS patching, performance tuning, and troubleshooting on RedHat and CentOS servers"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "B.S. Computer Science",
+      "institution": "Western Governors University",
+      "year": "2026"
+    }
+  ],
+  "certifications": [
+    "HashiCorp Certified: Terraform Associate",
+    "CKAD: Certified Kubernetes Application Developer",
+    "CKA: Certified Kubernetes Administrator",
+    "AWS Certified Solutions Architect – Associate",
+    "AWS Certified Cloud Practitioner",
+    "Oracle Cloud Infrastructure Foundations Certified Associate"
+  ],
+  "languages": [],
+  "projects": []
+}

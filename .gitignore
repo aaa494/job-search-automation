@@ -1,0 +1,12 @@
+.env
+cookies/
+output/
+jobs.db
+last_run.txt
+logs/
+__pycache__/
+*.pyc
+.venv/
+venv/
+credentials/token.json
+credentials/google_credentials.json
