@@ -25,8 +25,10 @@ SEARCH_CONFIG = {
     # Set to False for fully automatic (use carefully!)
     "require_review": True,
 
-    # Max applications to submit per run (safety limit)
-    "max_applications_per_run": 8,
+    # Max applications to submit per run
+    # In a typical day there are 5-15 good new remote DevOps jobs across all platforms.
+    # Set to a high number if you want to apply to everything above the score threshold.
+    "max_applications_per_run": 20,
 
     # Skip companies we already applied to (cross-platform dedup)
     "skip_duplicate_companies": True,

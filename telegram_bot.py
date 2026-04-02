@@ -37,7 +37,7 @@ DB_PATH = "jobs.db"
 COMMANDS = [
     ("helpjob", "List all commands"),
     ("test",    "Find 1 real job and apply now (test mode)"),
-    ("run",     "Start full job search (up to 8 applications)"),
+    ("run",     "Start full job search for today"),
     ("stop",    "Stop the current run"),
     ("stats",   "Application stats and recent jobs"),
     ("report",  "Latest run summary"),
@@ -151,8 +151,7 @@ def _start_run(args: list[str], label: str) -> str:
         )
         return (
             f"🚀 <b>{label}</b>\n"
-            f"PID: {_run_process.pid}\n"
-            "You'll get Telegram notifications as jobs are found and applied.\n"
+            "You'll get a notification for each match and application.\n"
             "Use /stop to cancel."
         )
     except Exception as e:
