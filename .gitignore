@@ -8,5 +8,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-credentials/token.json
-credentials/google_credentials.json
+credentials/
+reports/
+user_config.json

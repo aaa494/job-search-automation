@@ -3,12 +3,14 @@ Score job relevance using Claude.
 Returns a 0-100 score + reasoning so main.py can filter low-quality matches.
 """
 
+import asyncio
 import json
+import logging
 import anthropic
 from config import AI_CONFIG
 from database import Job
 
-
+log = logging.getLogger("jobsearch")
 _client = anthropic.AsyncAnthropic()
 
 
@@ -71,7 +73,17 @@ Respond ONLY with valid JSON, no markdown:
     if AI_CONFIG.get("use_thinking"):
         kwargs["thinking"] = {"type": "adaptive"}
 
-    response = await _client.messages.create(**kwargs)
+    # Retry up to 3 times on transient network errors
+    response = None
+    for attempt in range(3):
+        try:
+            response = await _client.messages.create(**kwargs)
+            break
+        except Exception as e:
+            if attempt == 2:
+                raise
+            log.warning("Claude API attempt %d/3 failed (%s) — retrying in %ds", attempt + 1, type(e).__name__, 3 * (attempt + 1))
+            await asyncio.sleep(3 * (attempt + 1))
 
     # Extract the text block (thinking blocks may precede it)
     text = next(b.text for b in response.content if b.type == "text")

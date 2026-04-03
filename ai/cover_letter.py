@@ -60,6 +60,7 @@ Recent Work Highlights:
 - Simple sentences. Short paragraphs.
 - Avoid these words completely: leveraged, spearheaded, synergies, cutting-edge, innovative, passionate, driven, dynamic, robust, seamlessly, orchestrated
 - Use these instead: built, set up, managed, worked on, helped, improved, reduced, wrote, deployed, handled, made sure
+- Do NOT use em-dashes (—) anywhere. Use commas or colons instead.
 - It's OK to say "I" a lot — cover letters are personal
 - It's OK to say "I have experience with X" instead of fancy phrases
 - First sentence should NOT be "I am writing to express my interest" — be more direct

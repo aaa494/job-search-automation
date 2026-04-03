@@ -1,6 +1,133 @@
 """
 Central configuration. Edit SEARCH_CONFIG and PLATFORMS to customize your search.
+Overrides can also be saved via the dashboard (python dashboard.py) to user_config.json
+without touching this file.
 """
+
+import json
+from pathlib import Path
+
+
+def _load_user_config() -> dict:
+    """Load user_config.json overrides saved from the dashboard."""
+    p = Path("user_config.json")
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+# ── Company blacklist ──────────────────────────────────────────────────────────
+# Jobs from these companies (or any known subsidiary / parent) are skipped.
+# Keys are the group label shown in logs; values are substrings matched
+# case-insensitively against the scraped company name.
+COMPANY_BLACKLIST: dict[str, list[str]] = {
+    "Jack Henry & Associates": [
+        "Jack Henry",
+        "Banno",
+        "ProfitStars",
+        "Profitstars",
+        "iPay Technologies",
+        "Goldleaf",
+        "Pemco Technology",
+    ],
+    "SAP": [
+        "SAP SE",
+        "SAP Labs",
+        "SAP America",
+        "SAP AG",
+        " SAP ",          # standalone word (spaces prevent matching "esap", "asap")
+        "SuccessFactors",
+        "Concur Technologies",
+        "Qualtrics",
+        "Ariba",
+        "Hybris",
+        "Signavio",
+        "LeanIX",
+        "WalkMe",
+        "Callidus",
+        "BusinessObjects",
+        "Sybase",
+    ],
+    "Akuna Capital": [
+        "Akuna Capital",
+    ],
+}
+
+
+def is_blacklisted(company: str) -> tuple[bool, str]:
+    """
+    Returns (True, group_name) if the company matches any blacklist entry,
+    (False, "") otherwise.
+    """
+    c = company.lower()
+    for group, names in COMPANY_BLACKLIST.items():
+        for name in names:
+            if name.lower() in c:
+                return True, group
+    return False, ""
+
+
+# ── Job / position blacklist ───────────────────────────────────────────────────
+# If the job TITLE contains any of these substrings (case-insensitive), skip it.
+JOB_TITLE_BLACKLIST: list[str] = [
+    "clearance",
+    "cleared",
+    "secret",
+    "top secret",
+    "ts/sci",
+    "polygraph",
+]
+
+# If the job DESCRIPTION contains any of these phrases (case-insensitive), skip it.
+# These phrases reliably indicate roles requiring security clearance or citizenship.
+JOB_DESCRIPTION_BLACKLIST: list[str] = [
+    "security clearance",
+    "clearance required",
+    "active clearance",
+    "secret clearance",
+    "top secret",
+    "ts/sci",
+    "must hold a clearance",
+    "must have clearance",
+    "clearance is required",
+    "polygraph",
+    "us citizen only",
+    "us citizenship required",
+    "must be a us citizen",
+    "united states citizen only",
+    "citizens only",
+    "public trust clearance",
+    "dod clearance",
+    "dhs clearance",
+    "central intelligence agency",   # avoid matching "cia" inside words like "proficiency"
+    "national security agency",       # avoid matching "nsa" inside words
+    "department of defense",
+    "must be eligible for security clearance",
+    "ability to obtain a clearance",
+    "clearance eligible",
+]
+
+
+def is_job_blacklisted(title: str, description: str) -> tuple[bool, str]:
+    """
+    Returns (True, reason) if the job title or description matches the blacklist,
+    (False, "") otherwise.
+    """
+    title_lower = title.lower()
+    for phrase in JOB_TITLE_BLACKLIST:
+        if phrase.lower() in title_lower:
+            return True, f"title contains '{phrase}'"
+
+    desc_lower = description.lower()
+    for phrase in JOB_DESCRIPTION_BLACKLIST:
+        if phrase.lower() in desc_lower:
+            return True, f"description contains '{phrase}'"
+
+    return False, ""
+
 
 SEARCH_CONFIG = {
     # All roles to search for across platforms
@@ -62,7 +189,7 @@ PATHS = {
 BROWSER_CONFIG = {
     # False = visible browser window (easier to debug and handle CAPTCHAs)
     # True  = headless (no display — required on servers, good for scheduled runs)
-    "headless": True,
+    "headless": False,
     "slow_mo": 80,
     "viewport": {"width": 1280, "height": 900},
 }
@@ -82,3 +209,24 @@ GOOGLE_DRIVE_CONFIG = {
     "applications_subfolder": "Applications",  # PDFs + cover letters
     "reports_subfolder": "Reports",            # HTML reports
 }
+
+# ── Apply user_config.json overrides (written by dashboard.py) ────────────────
+_overrides = _load_user_config()
+if _overrides.get("search"):
+    SEARCH_CONFIG.update(_overrides["search"])
+if _overrides.get("platforms"):
+    for pname, pvals in _overrides["platforms"].items():
+        if pname in PLATFORMS:
+            PLATFORMS[pname].update(pvals)
+if _overrides.get("scheduler"):
+    SCHEDULER_CONFIG.update(_overrides["scheduler"])
+if _overrides.get("browser"):
+    BROWSER_CONFIG.update(_overrides["browser"])
+if _overrides.get("blacklist"):
+    # Merge additional blacklist entries from user config
+    for group, names in _overrides["blacklist"].items():
+        if group in COMPANY_BLACKLIST:
+            existing = set(COMPANY_BLACKLIST[group])
+            COMPANY_BLACKLIST[group] = list(existing | set(names))
+        else:
+            COMPANY_BLACKLIST[group] = names

@@ -75,7 +75,7 @@
   /* ── Certifications ── */
   .cert-list { list-style: none; column-count: 2; column-gap: 20px; }
   .cert-list li { font-size: 10pt; margin-bottom: 3px; padding-left: 10px; position: relative; break-inside: avoid; }
-  .cert-list li::before { content: "–"; position: absolute; left: 0; color: #555; }
+  .cert-list li::before { content: "•"; position: absolute; left: 0; color: #555; }
 
   /* ── Projects ── */
   .project { margin-bottom: 8px; }
@@ -135,7 +135,7 @@
         <span style="color:#888; font-weight:400;"> &nbsp;·&nbsp; </span>
         <span class="job-company">{{ job.company }}</span>
       </div>
-      <div class="job-dates">{{ job.start }} – {{ job.end }}</div>
+      <div class="job-dates">{{ job.start }} - {{ job.end }}</div>
     </div>
     <ul>
       {% for bullet in job.bullets %}

@@ -2,16 +2,21 @@
 Job Search Automation — main entry point.
 
 Flags:
-  (none)            Full run with manual review before each application
-  --dry-run         Search + score + generate ONE resume/PDF/cover-letter, no submitting
-  --search-only     Search + score all jobs, no applying, no file generation
-  --auto            Fully automatic (no review prompts) — for scheduler use
-  --report          Generate HTML report and open it
-  --stats           Print stats table to terminal
+  (none)             Full run with manual review before each application
+  --dry-run          Search + score + generate ONE resume/PDF/cover-letter, no submitting
+  --dry-run-apply    Like --dry-run but asks at the end whether to submit that 1 job
+  --search-only      Search + score all jobs, no applying, no file generation
+  --auto             Fully automatic (no review prompts) — for scheduler use
+  --report           Generate HTML report and open it
+  --stats            Print stats table to terminal
+  --login            Open browser to log in to platforms and save cookies (run once)
+  --test             Quick scraper test: 1 platform, 1 title, 1 job, ~30 sec, no AI
+                     Options: --platform=linkedin|indeed|dice|weworkremotely  --title="SRE"
 """
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
@@ -27,7 +32,19 @@ from rich.table import Table
 
 load_dotenv()
 
-from config import AI_CONFIG, PATHS, PLATFORMS, SEARCH_CONFIG
+# ── File logging ──────────────────────────────────────────────────────────────
+Path("logs").mkdir(exist_ok=True)
+_log_path = Path("logs") / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    handlers=[
+        logging.FileHandler(_log_path, encoding="utf-8"),
+    ],
+)
+log = logging.getLogger("jobsearch")
+
+from config import AI_CONFIG, PATHS, PLATFORMS, SEARCH_CONFIG, is_blacklisted, is_job_blacklisted
 from database import Database, Job
 from pdf_generator import generate_pdf, save_cover_letter
 from ai.job_matcher import score_job
@@ -40,6 +57,13 @@ from scrapers.dice import DiceScraper
 from scrapers.employer_site import fill_employer_form
 from reporter import generate_report
 from google_drive import upload_files_for_job, upload_report, is_enabled as drive_enabled
+from google_sheets import (
+    sync_all_jobs,
+    update_job_links,
+    is_enabled as sheets_enabled,
+    apply_sheets_config,
+)
+from email_checker import check_emails
 import telegram_notifier as tg
 
 console = Console()
@@ -98,26 +122,56 @@ async def process_job(
     job: Job,
     resume: dict,
     db: Database,
-    mode: str,          # "review" | "auto" | "dry_run" | "search_only"
+    mode: str,          # "review" | "auto" | "dry_run" | "dry_run_apply" | "search_only"
     scraper_cls,
     job_index: int,
     total: int,
 ) -> bool:
+    non_interactive = mode in ("auto", "dry_run_apply")
     """Score → adapt → cover letter → PDF → (optionally) apply. Returns True if applied."""
 
     console.rule(f"[bold cyan]Job {job_index}/{total} — {job.platform}[/bold cyan]")
+    log.info("Processing job %d/%d: %s @ %s (%s)", job_index, total, job.title, job.company, job.platform)
+
+    # ── Company blacklist ─────────────────────────────────────────────────────
+    bl_hit, bl_group = is_blacklisted(job.company)
+    if bl_hit:
+        console.print(
+            f"[dim]↳ Skipped — {job.company} is in company blacklist ({bl_group})[/dim]\n"
+        )
+        log.info("Company blacklisted: %s @ %s (group: %s)", job.title, job.company, bl_group)
+        if mode not in ("dry_run", "dry_run_apply"):
+            db.save_job(job)
+            db.update_status(job, "skipped", notes=f"blacklisted:company:{bl_group}")
+        return False
+
+    # ── Job / position blacklist ──────────────────────────────────────────────
+    jb_hit, jb_reason = is_job_blacklisted(job.title, job.description)
+    if jb_hit:
+        console.print(
+            f"[dim]↳ Skipped — {job.title} ({jb_reason})[/dim]\n"
+        )
+        log.info("Job blacklisted: %s @ %s — %s", job.title, job.company, jb_reason)
+        if mode not in ("dry_run", "dry_run_apply"):
+            db.save_job(job)
+            db.update_status(job, "skipped", notes=f"blacklisted:job:{jb_reason}")
+        return False
 
     # ── Score ────────────────────────────────────────────────────────────────
+    log.info("Scoring job with Claude...")
     with console.status("Scoring with Claude..."):
         try:
             score, reason = await score_job(job, resume)
         except Exception as e:
             console.print(f"[red]Scoring failed: {e}[/red]")
+            log.exception("Scoring failed for %s @ %s", job.title, job.company)
             return False
 
     job.relevance_score = score
     job.relevance_reason = reason
-    db.save_job(job)
+    if mode not in ("dry_run", "dry_run_apply"):
+        db.save_job(job)   # dry_run*: don't persist yet so the job stays fresh for real runs
+    log.info("Score: %.0f/100 — %s", score, reason)
 
     color = "green" if score >= 80 else "yellow" if score >= 65 else "red"
     console.print(
@@ -145,6 +199,33 @@ async def process_job(
         db.update_status(job, "skipped")
         return False
 
+    # ── Probe: check if application can be automated BEFORE generating files ──
+    # Skip probe in dry_run (no apply anyway) and review (user decides manually)
+    probe = {"can_automate": True, "needs_cover_letter": True, "reason": "skipped"}
+    if mode in ("auto", "dry_run_apply"):
+        with console.status("Checking if application can be automated..."):
+            try:
+                async with scraper_cls() as scraper:
+                    probe = await scraper.probe_apply(job)
+            except Exception as e:
+                log.warning("Probe failed for %s @ %s: %s", job.title, job.company, e)
+                probe = {"can_automate": True, "needs_cover_letter": True, "reason": f"probe_error:{e}"}
+        log.info("Probe result for %s @ %s: %s", job.title, job.company, probe)
+
+        if not probe.get("can_automate", True):
+            # Only skip for things we genuinely can't automate: interactive CAPTCHA, SMS/MFA
+            reason = probe.get("reason", "unknown")
+            console.print(
+                f"  [yellow]↳ Cannot auto-apply (CAPTCHA/MFA): {reason}[/yellow]\n"
+                f"  [dim]Apply manually: {job.url}[/dim]\n"
+            )
+            db.save_job(job)
+            db.update_status(job, "skipped", notes=f"cannot_automate:{reason[:100]}")
+            await tg.notify_manual_needed(job.title, job.company, job.url)
+            return False
+
+    needs_cover_letter = probe.get("needs_cover_letter", True)
+
     # ── Adapt resume ─────────────────────────────────────────────────────────
     with console.status("Adapting resume with Claude..."):
         try:
@@ -156,54 +237,75 @@ async def process_job(
     console.print("\n[bold]Customized Summary:[/bold]")
     console.print(Panel(adapted["summary"], border_style="blue", padding=(0, 1)))
 
-    # ── Cover letter ─────────────────────────────────────────────────────────
-    console.print("\n[bold]Cover Letter:[/bold]")
-    cl_chunks: list[str] = []
+    # ── Cover letter (only if the form actually needs one) ────────────────────
+    cover_letter = ""
+    cl_path = None
+    if needs_cover_letter:
+        console.print("\n[bold]Cover Letter:[/bold]")
+        cl_chunks: list[str] = []
 
-    def on_chunk(chunk: str):
-        console.print(chunk, end="")
-        cl_chunks.append(chunk)
+        def on_chunk(chunk: str):
+            console.print(chunk, end="")
+            cl_chunks.append(chunk)
 
-    try:
-        cover_letter = await generate_cover_letter(job, adapted, stream_callback=on_chunk)
-    except Exception as e:
-        console.print(f"\n[red]Cover letter failed: {e}[/red]")
-        return False
-    console.print()
+        try:
+            cover_letter = await generate_cover_letter(job, adapted, stream_callback=on_chunk)
+        except Exception as e:
+            console.print(f"\n[red]Cover letter failed: {e}[/red]")
+            return False
+        console.print()
+    else:
+        console.print("  [dim]Cover letter not needed — skipping.[/dim]")
 
     # ── Generate PDF ─────────────────────────────────────────────────────────
     out_dir = Path(PATHS["output_dir"])
     out_dir.mkdir(exist_ok=True)
     fname = safe_filename(f"{job.company}_{job.title}")
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%m%d%y")   # e.g. 040226
     pdf_path = str(out_dir / f"{fname}_{ts}.pdf")
-    cl_path  = str(out_dir / f"{fname}_{ts}_cover_letter.txt")
+    if needs_cover_letter:
+        cl_path = str(out_dir / f"{fname}_{ts}_cover_letter.txt")
 
     with console.status("Generating PDF..."):
         try:
             await generate_pdf(adapted, pdf_path)
-            save_cover_letter(cover_letter, cl_path)
+            if cl_path and cover_letter:
+                save_cover_letter(cover_letter, cl_path)
         except Exception as e:
             console.print(f"[red]PDF generation failed: {e}[/red]")
             return False
 
     console.print(f"[green]✓[/green] Resume: [dim]{pdf_path}[/dim]")
-    console.print(f"[green]✓[/green] Cover:  [dim]{cl_path}[/dim]")
+    if cl_path:
+        console.print(f"[green]✓[/green] Cover:  [dim]{cl_path}[/dim]")
 
     # ── Upload to Google Drive ────────────────────────────────────────────────
     pdf_link = cl_link = None
     if drive_enabled():
         with console.status("Uploading to Google Drive..."):
-            pdf_link, cl_link = upload_files_for_job(pdf_path, cl_path)
+            pdf_link, cl_link = upload_files_for_job(pdf_path, cl_path or "")
         if pdf_link:
             console.print(f"[green]✓[/green] Drive resume: [dim]{pdf_link}[/dim]")
         if cl_link:
             console.print(f"[green]✓[/green] Drive cover:  [dim]{cl_link}[/dim]")
+        if sheets_enabled() and (pdf_link or cl_link):
+            update_job_links(job.platform, job.job_id, pdf_link, cl_link)
 
     # ── Dry run stops here ────────────────────────────────────────────────────
     if mode == "dry_run":
         console.print("\n[yellow][DRY RUN] Files generated. No application submitted.[/yellow]\n")
         return False
+
+    # ── Dry-run-apply: save job, then fall through to apply automatically ────
+    if mode == "dry_run_apply":
+        console.print(
+            "\n[yellow][DRY RUN APPLY][/yellow] Applying automatically...\n"
+            f"  Job   : [bold]{job.title}[/bold] @ [cyan]{job.company}[/cyan]\n"
+            f"  Score : {job.relevance_score:.0f}/100\n"
+            f"  URL   : [dim]{job.url}[/dim]"
+        )
+        db.save_job(job)
+        # fall through to apply section below
 
     # ── Review gate (unless auto mode) ───────────────────────────────────────
     if mode == "review":
@@ -228,16 +330,25 @@ async def process_job(
 
     async with scraper_cls() as scraper:
         try:
-            # Platform-specific apply
-            success = await scraper.apply(job, pdf_path, cover_letter)
+            success = await scraper.apply(
+                job, pdf_path, cover_letter,
+                resume_data=adapted,
+                non_interactive=non_interactive,
+                cover_letter_path=cl_path,
+            )
 
-            # If platform apply returned False, try generic employer form filler
-            if not success and job.url:
+            # Fallback: generic form filler on job URL — only for non-LinkedIn platforms
+            # (LinkedIn's apply() already handles both Easy Apply and external links)
+            if not success and job.url and job.platform != "linkedin":
                 console.print("  [dim]Trying generic employer form filler...[/dim]")
                 page = await scraper.new_page()
                 try:
                     await page.goto(job.url, wait_until="domcontentloaded")
-                    success = await fill_employer_form(page, adapted, cover_letter, pdf_path)
+                    success = await fill_employer_form(
+                        page, adapted, cover_letter, pdf_path,
+                        cover_letter_path=cl_path,
+                        non_interactive=non_interactive,
+                    )
                 finally:
                     await page.close()
 
@@ -258,7 +369,12 @@ async def process_job(
     return success
 
 
-async def run(mode: str = "review", dry_run_limit: int = 1, max_apply_override: int = None):
+async def run(
+    mode: str = "review",
+    dry_run_limit: int = 1,
+    max_apply_override: int = None,
+    platforms_filter: list[str] | None = None,
+):
     console.print(Panel.fit(
         f"[bold cyan]Job Search Automation[/bold cyan]\n"
         f"Roles: [white]{', '.join(SEARCH_CONFIG['job_titles'][:4])} +more[/white]\n"
@@ -275,7 +391,12 @@ async def run(mode: str = "review", dry_run_limit: int = 1, max_apply_override: 
 
     # ── Scrape all platforms ──────────────────────────────────────────────────
     all_jobs: list[tuple[Job, type]] = []
-    enabled = {p: c for p, c in PLATFORMS.items() if c["enabled"] and p in SCRAPER_MAP}
+    seen_this_run: set[str] = set()   # dedup within this run (same job across titles)
+    enabled = {
+        p: c for p, c in PLATFORMS.items()
+        if c["enabled"] and p in SCRAPER_MAP
+        and (platforms_filter is None or p in platforms_filter)
+    }
     console.print(f"Platforms: {', '.join(enabled.keys())}\n")
 
     await tg.notify_run_started(list(enabled.keys()), SEARCH_CONFIG["job_titles"])
@@ -283,22 +404,39 @@ async def run(mode: str = "review", dry_run_limit: int = 1, max_apply_override: 
     for platform, cfg in enabled.items():
         scraper_cls = SCRAPER_MAP[platform]
         console.print(f"[cyan]Searching {platform}...[/cyan]", end=" ")
+        log.info("=== Platform: %s ===", platform)
         found = new_count = 0
 
         async with scraper_cls() as scraper:
             titles = SEARCH_CONFIG["job_titles"]
             per_title = max(1, cfg["max_jobs_to_scrape"] // len(titles))
             for title in titles:
+                console.print(f"\n  [dim]→ {title}[/dim]", end=" ")
+                log.info("Searching '%s' on %s (max %d)", title, platform, per_title)
+                title_count = 0
                 try:
                     async for job in scraper.search_jobs(title, per_title):
                         found += 1
-                        if not db.is_seen(job.platform, job.job_id):
+                        title_count += 1
+                        job_key = f"{job.platform}:{job.job_id}"
+                        if job_key in seen_this_run or db.is_seen(job.platform, job.job_id):
+                            console.print(f"[dim]·[/dim]", end=" ")
+                            log.debug("  seen %s @ %s", job.title, job.company)
+                        else:
+                            seen_this_run.add(job_key)
                             all_jobs.append((job, scraper_cls))
                             new_count += 1
+                            console.print(f"[green]✓[/green]", end=" ")
+                            log.info("  NEW  %s @ %s  [%s]  %s", job.title, job.company, job.location, job.url)
                 except Exception as e:
                     console.print(f"\n  [red]{platform} search error: {e}[/red]")
+                    log.exception("Search error on %s / %s", platform, title)
+                log.info("  title='%s' found=%d", title, title_count)
+                if title_count == 0:
+                    console.print(f"[dim](0)[/dim]", end="")
 
-        console.print(f"Found {found}, [green]{new_count} new[/green]")
+        console.print(f"\nFound {found}, [green]{new_count} new[/green]")
+        log.info("Platform %s done: found=%d new=%d", platform, found, new_count)
 
     if not all_jobs:
         console.print("\n[yellow]No new jobs found. Try again later.[/yellow]")
@@ -310,7 +448,7 @@ async def run(mode: str = "review", dry_run_limit: int = 1, max_apply_override: 
     applied = 0
     max_apply = max_apply_override if max_apply_override is not None else SEARCH_CONFIG["max_applications_per_run"]
 
-    limit = dry_run_limit if mode == "dry_run" else len(all_jobs)
+    limit = dry_run_limit if mode in ("dry_run", "dry_run_apply") else len(all_jobs)
 
     for i, (job, scraper_cls) in enumerate(all_jobs[:limit], 1):
         if mode != "dry_run" and applied >= max_apply:
@@ -341,6 +479,26 @@ async def run(mode: str = "review", dry_run_limit: int = 1, max_apply_override: 
     except Exception as e:
         console.print(f"[dim]Report error: {e}[/dim]")
 
+    # Sync Google Sheets
+    if sheets_enabled():
+        with console.status("Syncing Google Sheets..."):
+            try:
+                sync_all_jobs(PATHS["database"])
+                log.info("Google Sheets synced.")
+            except Exception as e:
+                console.print(f"[dim]Sheets sync error: {e}[/dim]")
+                log.exception("Sheets sync failed")
+
+    # Check email for responses
+    try:
+        email_matches = await check_emails(PATHS["database"])
+        if email_matches:
+            console.print(f"[green]Email check:[/green] {email_matches} response(s) found")
+        log.info("Email check done: %d matches", email_matches)
+    except Exception as e:
+        console.print(f"[dim]Email check error: {e}[/dim]")
+        log.exception("Email check failed")
+
     # Final Telegram summary
     stats = db.get_stats()
     avg_row = None
@@ -360,12 +518,119 @@ async def run(mode: str = "review", dry_run_limit: int = 1, max_apply_override: 
     )
 
 
+async def test_scraper(platform: str = "indeed", title: str = "DevOps Engineer"):
+    """
+    Quick scraper test: search 1 title on 1 platform, fetch 1 job detail, print result.
+    No AI, no DB writes, no files. Completes in ~30 seconds.
+
+    Usage:
+      python main.py --test
+      python main.py --test --platform=linkedin --title="SRE"
+      python main.py --test --platform=dice
+    """
+    scraper_cls = SCRAPER_MAP.get(platform)
+    if not scraper_cls:
+        console.print(f"[red]Unknown platform: {platform}. Choose from: {', '.join(SCRAPER_MAP)}[/red]")
+        return
+
+    console.print(f"\n[cyan]TEST:[/cyan] {platform} / '{title}' — fetching 1 job\n")
+    log.info("test_scraper: platform=%s title=%s", platform, title)
+
+    found = None
+    async with scraper_cls() as scraper:
+        try:
+            async for job in scraper.search_jobs(title, max_results=1):
+                found = job
+                break
+        except Exception as e:
+            console.print(f"[red]Search error: {e}[/red]")
+            log.exception("test_scraper search failed")
+            return
+
+    if not found:
+        console.print("[yellow]No jobs found. Check the log for details:[/yellow]")
+        console.print(f"  tail -f {_log_path}")
+        return
+
+    console.print(f"[green]✓ Found:[/green] [bold]{found.title}[/bold] @ {found.company}")
+    console.print(f"  Location : {found.location or '(none)'}")
+    console.print(f"  URL      : {found.url}")
+    console.print(f"  Desc len : {len(found.description)} chars")
+    console.print(f"\n[dim]Description preview:[/dim]")
+    console.print(found.description[:400])
+    console.print(f"\n[green]Scraper working correctly for {platform}.[/green]")
+    log.info("test_scraper OK: %s @ %s desc_len=%d", found.title, found.company, len(found.description))
+
+
+async def do_login(platforms: list[str]):
+    """Open a visible browser for each platform, let the user log in, save cookies."""
+    from config import BROWSER_CONFIG
+    import config as _cfg
+
+    # Force visible browser for login regardless of config
+    original_headless = BROWSER_CONFIG["headless"]
+    _cfg.BROWSER_CONFIG["headless"] = False
+
+    login_scrapers = {
+        "linkedin": LinkedInScraper,
+        "indeed":   IndeedScraper,
+    }
+    for name in platforms:
+        cls = login_scrapers.get(name)
+        if not cls:
+            console.print(f"[dim]{name}: no login needed[/dim]")
+            continue
+        console.print(f"\n[cyan]Opening browser for {name}...[/cyan]")
+        async with cls() as scraper:
+            page = await scraper.new_page()
+            if name == "linkedin":
+                await page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
+            elif name == "indeed":
+                await page.goto("https://secure.indeed.com/auth", wait_until="domcontentloaded")
+            console.print(f"  Log in to [bold]{name}[/bold] in the browser window.")
+            input(f"  Press ENTER when done: ")
+            await scraper._save_cookies()
+            await page.close()
+        console.print(f"  [green]✓[/green] Cookies saved for {name}")
+
+    _cfg.BROWSER_CONFIG["headless"] = original_headless
+
+
+_PLATFORM_FLAGS = {"--linkedin", "--indeed", "--dice", "--weworkremotely"}
+_FLAG_TO_PLATFORM = {f"--{p}": p for p in ["linkedin", "indeed", "dice", "weworkremotely"]}
+
+
+def _parse_platform_filter(args: set) -> list[str] | None:
+    """Return list of platform names if any --platform flags are set, else None (= all)."""
+    selected = [_FLAG_TO_PLATFORM[a] for a in args if a in _FLAG_TO_PLATFORM]
+    return selected if selected else None
+
+
 def main():
     args = set(sys.argv[1:])
+
+    console.print(f"[dim]Log: {_log_path.absolute()}[/dim]")
+    log.info("Run started: %s", " ".join(sys.argv))
+
+    # Pull settings from Google Sheets if enabled — overrides config.py and user_config.json
+    if sheets_enabled():
+        try:
+            apply_sheets_config()
+            log.info("Config loaded from Google Sheets.")
+        except Exception as e:
+            console.print(f"[dim]Sheets config load skipped: {e}[/dim]")
 
     if "--stats" in args:
         db = Database(PATHS["database"])
         show_stats(db)
+        return
+
+    if "--login" in args:
+        # Which platforms to log into (default: linkedin indeed)
+        platforms = [a for a in sys.argv[1:] if not a.startswith("--")]
+        if not platforms:
+            platforms = ["linkedin", "indeed"]
+        asyncio.run(do_login(platforms))
         return
 
     if "--report" in args:
@@ -374,10 +639,26 @@ def main():
         webbrowser.open(f"file://{Path(path).absolute()}")
         return
 
+    if "--test" in args:
+        # Quick scraper test: 1 platform, 1 title, 1 job — no AI, no files, ~30 sec
+        platform = next((a.split("=")[1] for a in args if a.startswith("--platform=")), "indeed")
+        title = next((a.split("=")[1] for a in args if a.startswith("--title=")), "DevOps Engineer")
+        asyncio.run(test_scraper(platform, title))
+        return
+
     if "--dry-run" in args:
         # Run full pipeline for 1 job, generate files, DO NOT submit
         console.print("[yellow]DRY RUN MODE — will process 1 job fully, no submission.[/yellow]")
         asyncio.run(run(mode="dry_run", dry_run_limit=1))
+        return
+
+    if "--dry-run-apply" in args:
+        # Tries up to 10 candidates, stops as soon as 1 is successfully applied.
+        # Uses --linkedin/--indeed/etc. to restrict which platform to search.
+        pf = _parse_platform_filter(args)
+        plat_str = f" [{', '.join(pf)}]" if pf else " [all platforms]"
+        console.print(f"[yellow]DRY RUN APPLY — up to 3 candidates{plat_str}, stops after first apply.[/yellow]")
+        asyncio.run(run(mode="dry_run_apply", dry_run_limit=3, max_apply_override=1, platforms_filter=pf))
         return
 
     if "--search-only" in args:

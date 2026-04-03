@@ -11,15 +11,19 @@ Searches LinkedIn, Indeed, We Work Remotely, and Dice every day — scores each 
 ## What It Does
 
 1. **Searches** 4 job boards for remote US positions posted in the last 24 hours
-2. **Scores** each job 0-100 with Claude AI — skips anything below your threshold
-3. **Adapts** your resume summary and bullets to match each job description
-4. **Generates** a PDF resume + personalized cover letter per job
-5. **Deduplicates** — never applies to the same job or company twice
-6. **Applies** via LinkedIn Easy Apply, Indeed Quick Apply, or generic form filler
-7. **Notifies** you on Telegram: matches, successful applications, errors, run summaries
-8. **Uploads** all files to Google Drive automatically
-9. **Reports** a full HTML summary after each run
-10. **Auto-starts** on Mac boot — if the laptop was off during the scheduled run, it catches up immediately and notifies you via Telegram
+2. **Filters** blacklisted companies (Jack Henry, SAP, Akuna Capital + subsidiaries) before scoring
+3. **Scores** each job 0-100 with Claude AI — skips anything below your threshold
+4. **Adapts** your resume summary and bullets to match each job description
+5. **Generates** a PDF resume + personalized cover letter per job
+6. **Deduplicates** — never applies to the same job or company twice
+7. **Applies** via LinkedIn Easy Apply, Indeed Quick Apply, or generic form filler
+8. **Notifies** you on Telegram: matches, successful applications, errors, run summaries
+9. **Uploads** all files to Google Drive automatically
+10. **Google Sheets control panel** — Applications, Settings, and Blacklist tabs all in one spreadsheet
+    - Edit settings directly in Sheets — script reads them before every run
+    - Yahoo email responses auto-update the Applications tab
+11. **Dashboard** — local web UI as an alternative to Sheets for editing settings
+12. **Auto-starts** on Mac boot — if the laptop was off during the scheduled run, it catches up immediately
 
 ---
 
@@ -48,7 +52,7 @@ This creates a Python virtual environment, installs all dependencies, and downlo
 Copy the env template and open it:
 ```bash
 cp .env.example .env
-open .env          # opens in TextEdit, or use any editor
+open .env
 ```
 
 Fill in your Anthropic API key (required):
@@ -64,8 +68,7 @@ Get a key at [console.anthropic.com](https://console.anthropic.com) → API Keys
 open resume/base_resume.json
 ```
 
-Edit with your real name, contact info, skills, experience, education, certifications.  
-The file format follows the existing structure — just replace the placeholder values.
+Edit with your real name, contact info, skills, experience, education, certifications.
 
 ### Step 4 — Test it (no applications submitted)
 
@@ -74,8 +77,8 @@ source .venv/bin/activate
 python main.py --dry-run
 ```
 
-A browser window will open. Log in to LinkedIn via Google, press ENTER in the terminal.  
-The script finds 1 job, scores it, adapts your resume, generates a PDF + cover letter.  
+A browser window will open. Log in to LinkedIn via Google, press ENTER in the terminal.
+The script finds 1 job, scores it, adapts your resume, generates a PDF + cover letter.
 Nothing is submitted. Check `output/` to see the generated files.
 
 ### Step 5 — Enable auto-start on Mac boot (recommended)
@@ -84,8 +87,7 @@ Nothing is submitted. Check `output/` to see the generated files.
 bash macos_autostart.sh install
 ```
 
-Done. The job search now runs automatically every day at 09:00.  
-If your Mac was off at 09:00, it runs as soon as you turn it on and notifies you via Telegram.
+Done. The job search now runs automatically every day at 09:00.
 
 ### Step 6 (optional) — Set up Telegram and Google Drive
 
@@ -100,9 +102,9 @@ source .venv/bin/activate
 python main.py --dry-run
 ```
 
-This searches for 1 real job, adapts your resume, generates a PDF + cover letter — but does **not** submit anything. Good for verifying everything works.
+Searches for 1 real job, adapts your resume, generates a PDF + cover letter — does **not** submit anything.
 
-**What happens with login:**  
+**What happens with login:**
 A browser window opens. Click **"Sign in with Google"** and log in to LinkedIn/Indeed normally. Come back to the terminal and press **ENTER**. Your session is saved — subsequent runs log in automatically.
 
 ---
@@ -116,6 +118,15 @@ python main.py
 # Automatic — no prompts (for scheduler)
 python main.py --auto
 
+# Fully automatic end-to-end test: 1 job → apply → report
+python main.py --dry-run-apply
+
+# Limit to one platform (faster)
+python main.py --dry-run-apply --linkedin
+python main.py --dry-run-apply --indeed
+python main.py --dry-run-apply --dice
+python main.py --dry-run-apply --weworkremotely
+
 # Search only — see scores, no applying
 python main.py --search-only
 
@@ -128,45 +139,116 @@ python main.py --report
 
 ---
 
-## Auto-Start on Mac Boot (recommended)
+## Dry Run Apply (1 job, fully automatic)
 
-Install once — the scheduler starts automatically every time your Mac turns on.
+`--dry-run-apply` runs the full pipeline on exactly 1 job and applies automatically — no prompts.
+
+```bash
+# Search all platforms, pick the first matching job
+python main.py --dry-run-apply
+
+# Search only LinkedIn (much faster — no need to wait for all platforms)
+python main.py --dry-run-apply --linkedin
+```
+
+What happens:
+1. Searches the chosen platform(s)
+2. Finds 1 job above the score threshold
+3. Adapts resume, generates PDF + cover letter
+4. Applies automatically (Easy Apply / Quick Apply / form filler)
+5. Opens the HTML report showing the result
+
+Use this to verify the full pipeline works before enabling the daily scheduler.
+
+---
+
+## Google Sheets Control Panel
+
+When `GOOGLE_SHEETS_ENABLED=true`, the script creates and maintains a spreadsheet:
+**"Job Applications"** with three tabs:
+
+| Tab | Purpose |
+|-----|---------|
+| **Applications** | All jobs: title, company, score, status, files, email response |
+| **Settings** | All config — edit values in the sheet, script reads them before each run |
+| **Blacklist** | Company blacklist — add/remove groups and names |
+
+**Settings tab** — editable columns:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| min_relevance_score | 70 | Jobs below this score are skipped |
+| max_applications_per_run | 20 | Max jobs to apply per run |
+| posted_within_days | 1 | Look back N days (1 = last 24h) |
+| require_review | FALSE | TRUE = ask before each submission |
+| job_titles | DevOps Engineer, ... | Comma-separated job titles |
+| run_at | 09:00 | Daily run time |
+| linkedin_enabled | TRUE | Search LinkedIn |
+| linkedin_max_jobs | 30 | Max LinkedIn jobs per run |
+| ... | ... | (same for indeed, dice, weworkremotely) |
+
+**Yahoo email → Sheets auto-update:**
+When `EMAIL_CHECK_ENABLED=true`, the script checks your Yahoo inbox after each run, classifies any job response emails with Claude AI, and writes the result into the **Email Response** column in the Applications tab. No manual action needed.
+
+---
+
+## Dashboard (local Settings UI)
+
+As an alternative to Google Sheets, run the local web dashboard:
+
+```bash
+python dashboard.py          # opens http://localhost:5050
+python dashboard.py --port=8080
+```
+
+| Tab | What you can do |
+|-----|----------------|
+| **Applications** | Live table from the database |
+| **Settings** | Edit all config + blacklist — click Save |
+
+Settings are saved to `user_config.json`. If Google Sheets is also enabled, Sheets settings take priority (they're applied last).
+
+---
+
+## Company Blacklist
+
+Companies in the blacklist are skipped before any AI calls — no API costs, no files generated.
+
+**Default blacklisted groups:**
+
+| Group | Skipped names |
+|-------|--------------|
+| Jack Henry & Associates | Jack Henry, Banno, ProfitStars, iPay Technologies, Goldleaf, Pemco Technology |
+| SAP | SAP SE/Labs/America/AG, SuccessFactors, Concur, Qualtrics, Ariba, Hybris, Signavio, LeanIX, WalkMe, Callidus, BusinessObjects, Sybase |
+| Akuna Capital | Akuna Capital |
+
+To add more: edit the **Blacklist tab** in Google Sheets, or the dashboard Settings tab, or `COMPANY_BLACKLIST` in `config.py`.
+
+---
+
+## Auto-Start on Mac Boot (recommended)
 
 ```bash
 bash macos_autostart.sh install
-```
-
-**How it works:**
-- Mac boots → scheduler starts in the background
-- Every day at 09:00 (configurable in `config.py`) → job search runs automatically
-- **If your Mac was off** during the scheduled time → on next boot, scheduler detects the missed run, sends you a Telegram message, and starts the job search immediately
-- You receive Telegram notifications for every match, application, and daily summary
-
-```bash
 bash macos_autostart.sh status     # check if running
 bash macos_autostart.sh uninstall  # remove auto-start
 ```
 
-Logs are saved to `logs/scheduler.log`.
+- Mac boots → scheduler starts in background
+- Every day at 09:00 (configurable) → job search runs automatically
+- If your Mac was off during the scheduled time → on next boot, detects missed run, sends Telegram message, starts immediately
 
-To change the run time, edit `config.py`:
-```python
-SCHEDULER_CONFIG = {
-    "run_at": "09:00",  # 24h format, your local time
-}
-```
+To change the run time, either edit `config.py` or use the dashboard Settings tab.
 
 ---
 
 ## Optional: Telegram Notifications
 
-Get notified on your phone for every match, application, and run summary.
-
 **Setup (2 minutes):**
 1. Open Telegram → search **@BotFather** → `/newbot`
 2. Follow prompts → copy the **token** (looks like `123456:ABCdef...`)
 3. Send any message to your new bot
-4. Open in browser: `https://api.telegram.org/bot<TOKEN>/getUpdates`  
+4. Open in browser: `https://api.telegram.org/bot<TOKEN>/getUpdates`
    Find `"chat":{"id": <NUMBER>}` — that's your **Chat ID**
 5. Add to `.env`:
    ```
@@ -174,9 +256,8 @@ Get notified on your phone for every match, application, and run summary.
    TELEGRAM_CHAT_ID=123456789
    ```
 
-**Telegram bot commands** (type `/` in your bot chat to see the dropdown):
+**Telegram bot commands:**
 
-Run the bot in a separate terminal:
 ```bash
 python telegram_bot.py --register   # register commands (first time)
 python telegram_bot.py              # start listening for commands
@@ -193,23 +274,35 @@ python telegram_bot.py              # start listening for commands
 
 ---
 
-## Optional: Google Drive
+## Optional: Google Drive + Google Sheets
 
-Store all resumes, cover letters, and reports in your Google Drive automatically.
+Both use the same credentials file. Enable either or both independently.
 
 **Setup (5 minutes):**
 1. Go to [console.cloud.google.com](https://console.cloud.google.com)
-2. Create a project → **APIs & Services** → **Enable Google Drive API**
+2. Create a project → **APIs & Services** → enable **Google Drive API** and **Google Sheets API**
 3. **Credentials** → **Create OAuth 2.0 Client ID** → Application type: **Desktop app**
 4. Download the JSON → save as `credentials/google_credentials.json`
-5. In `.env`, set `GOOGLE_DRIVE_ENABLED=true`
-6. Run once to authorize: `python auth_google_drive.py`
+5. In `.env`:
+   ```
+   GOOGLE_DRIVE_ENABLED=true
+   GOOGLE_SHEETS_ENABLED=true
+   ```
+6. Run once to authorize Drive: `python auth_google_drive.py`
+7. On the next run, Sheets will authorize in the terminal (paste the code it shows you)
 
-Files are organized in Drive:
+**Drive** — files organized automatically:
 ```
 Job Search Automation/
   ├── Applications/     ← PDF resumes + cover letters
   └── Reports/          ← HTML reports
+```
+
+**Sheets** — one spreadsheet "Job Applications":
+```
+Applications tab  ← all jobs with links to Drive files + email response column
+Settings tab      ← edit config in-sheet, script reads before every run
+Blacklist tab     ← edit company blacklist in-sheet
 ```
 
 ---
@@ -228,16 +321,20 @@ This persists across all runs — restoring your laptop or reinstalling doesn't 
 
 ```
 job-search-automation/
-├── main.py                    # Entry point
-├── config.py                  # All configuration — edit this
+├── main.py                    # Entry point — all run modes
+├── config.py                  # Defaults + COMPANY_BLACKLIST
+├── user_config.json           # Your overrides (written by dashboard) — not in git
+├── dashboard.py               # Local web UI: Applications + Settings tabs
 ├── database.py                # SQLite job tracking
-├── reporter.py                # HTML report generator
+├── reporter.py                # HTML report generator (2 tabs)
 ├── scheduler.py               # Daily auto-run with missed-run detection
 ├── macos_autostart.sh         # Install/remove macOS LaunchAgent
 ├── telegram_bot.py            # Telegram command handler
 ├── telegram_notifier.py       # Telegram outgoing notifications
 ├── google_drive.py            # Google Drive uploader
+├── google_sheets.py           # Google Sheets tracker (optional)
 ├── pdf_generator.py           # Resume → PDF via Playwright
+├── email_checker.py           # Check inbox for job responses
 ├── auth_google_drive.py       # One-time Google Drive authorization
 ├── test_pipeline.py           # Test AI pipeline without scraping
 │
@@ -262,7 +359,7 @@ job-search-automation/
 ├── cookies/                   # Browser sessions — not committed to git
 ├── output/                    # Generated PDFs and cover letters
 ├── reports/                   # HTML reports
-├── logs/                      # Scheduler logs (created on first run)
+├── logs/                      # Run logs
 ├── jobs.db                    # SQLite database
 │
 ├── .env                       # Your secrets — not committed to git
@@ -287,29 +384,32 @@ Banned words in all AI output: *leveraged, spearheaded, orchestrated, synergies,
 
 ## Troubleshooting
 
-**`ANTHROPIC_API_KEY not set`**  
+**`ANTHROPIC_API_KEY not set`**
 → Open `.env` and add your key
 
-**Browser doesn't open on login**  
+**Browser doesn't open on login**
 → Make sure `BROWSER_CONFIG["headless"] = False` in `config.py` (default)
 
-**Cloudflare blocks scraping**  
+**Cloudflare blocks scraping**
 → This only happens on remote servers — run on your Mac, not a VPS
 
-**PDF not generated**  
+**PDF not generated**
 → Run `playwright install chromium`
 
-**Google Drive: credentials not found**  
+**Google Drive: credentials not found**
 → File must be at `credentials/google_credentials.json`
 
-**Telegram: no messages received**  
+**Telegram: no messages received**
 → Send at least one message to your bot first; check token and chat ID in `.env`
 
-**All jobs skipped**  
-→ Lower `min_relevance_score` in `config.py` (default: 70)
+**All jobs skipped**
+→ Lower `min_relevance_score` in the dashboard or `config.py` (default: 70)
 
-**Auto-start not working**  
+**Auto-start not working**
 → Run `bash macos_autostart.sh status` to check; check `logs/scheduler_error.log`
+
+**Dashboard won't open**
+→ Make sure you're in the project folder with the venv active: `source .venv/bin/activate && python dashboard.py`
 
 ---
 
@@ -318,4 +418,5 @@ Banned words in all AI output: *leveraged, spearheaded, orchestrated, synergies,
 - `.env` is in `.gitignore` — never committed
 - `credentials/` OAuth tokens are in `.gitignore`
 - `cookies/` browser sessions are in `.gitignore`
+- `user_config.json` is in `.gitignore` — settings stay local
 - No passwords stored anywhere — only session cookies

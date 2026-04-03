@@ -4,12 +4,12 @@
     "title": "DevOps / Cloud Engineer",
     "email": "aidarbek.a@yahoo.com",
     "phone": "773.757.2279",
-    "location": "Chicago, IL (Green Card Holder — open to remote US positions)",
+    "location": "Chicago, IL (Green Card Holder)",
     "linkedin": "",
     "github": "",
     "website": ""
   },
-  "summary": "DevOps Engineer with 7 years of experience on AWS, Azure, and GCP. Built and maintained Kubernetes clusters, Terraform infrastructure, and CI/CD pipelines at Jack Henry (fintech) and Akuna Capital (trading). Holds CKA, CKAD, and Terraform Associate certifications. Green Card holder, open to remote US positions.",
+  "summary": "DevOps Engineer with 7 years of experience on AWS, Azure, and GCP. Built and maintained Kubernetes clusters, Terraform infrastructure, and CI/CD pipelines at Jack Henry (fintech) and Akuna Capital (trading). Holds CKA, CKAD, and Terraform Associate certifications. Green Card holder.",
   "skills": {
     "cloud": ["AWS", "Azure", "GCP", "Oracle Cloud"],
     "iac_config": ["Terraform", "Ansible", "Pulumi", "CloudFormation", "HCL"],
@@ -33,9 +33,9 @@
       "bullets": [
         "Built and maintained multi-region Kubernetes clusters with Helm charts for a financial services platform, handling zero-downtime deployments and pod lifecycle management",
         "Designed Terraform infrastructure using reusable modules, remote state backends, and workspaces to manage AWS and Azure environments consistently across dev, staging, and prod",
-        "Built CI/CD pipelines with GitHub Actions and ArgoCD using GitOps — reduced release cycle from weekly to daily with no increase in incidents",
+        "Built CI/CD pipelines with GitHub Actions and ArgoCD using GitOps, reducing the release cycle from weekly to daily with no increase in incidents",
         "Set up HashiCorp Vault for secrets management with RBAC and automated secret rotation across all Kubernetes workloads",
-        "Deployed Datadog, Prometheus, and Grafana for full-stack observability — set up dashboards, alert routing, and runbooks that cut mean time to resolution on production incidents",
+        "Deployed Datadog, Prometheus, and Grafana for full-stack observability: set up dashboards, alert routing, and runbooks that cut mean time to resolution on production incidents",
         "Integrated Trivy container scanning and Kubernetes RBAC policies into CI/CD to maintain SOC 2 and PCI DSS compliance",
         "Implemented Velero for Kubernetes backup and disaster recovery, tested restore procedures across three environments",
         "Administered MongoDB Atlas clusters including replica sets, index optimization, and automated backups for high-traffic applications"

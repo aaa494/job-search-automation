@@ -108,6 +108,7 @@ Description:
 - Do NOT add bullets about tools not mentioned in original experience
 - Simple language — no corporate buzzwords
 - Real numbers/metrics only if they were in the original bullets
+- Do NOT use em-dashes (—) anywhere in bullets or summary. Use commas or colons instead.
 
 Return ONLY valid JSON, no markdown:
 {{

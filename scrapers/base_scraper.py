@@ -31,7 +31,10 @@ class BaseScraper:
         self._browser = await self._playwright.chromium.launch(
             headless=BROWSER_CONFIG["headless"],
             slow_mo=BROWSER_CONFIG["slow_mo"],
-            args=["--disable-blink-features=AutomationControlled"],
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--window-position=3000,0",   # open off-screen so it doesn't steal focus
+            ],
         )
         self._context = await self._browser.new_context(
             viewport=BROWSER_CONFIG["viewport"],
@@ -98,7 +101,33 @@ class BaseScraper:
     async def search_jobs(self, query: str, max_results: int) -> AsyncIterator[Job]:
         raise NotImplementedError
 
-    async def apply(self, job: Job, resume_pdf_path: str, cover_letter_text: str) -> bool:
+    async def probe_apply(self, job: Job) -> dict:
+        """
+        Lightweight preflight check: navigate to the apply page and ask Claude if
+        the form can be auto-submitted and whether a cover letter is needed.
+        Returns {"can_automate": bool, "needs_cover_letter": bool, "reason": str}.
+        Default implementation navigates to job.url and probes with Claude Vision.
+        """
+        from scrapers.employer_site import probe_form
+        page = await self.new_page()
+        try:
+            await page.goto(job.url, wait_until="domcontentloaded")
+            await self.human_delay(2000, 3000)
+            return await probe_form(page, page.url)
+        except Exception as e:
+            return {"can_automate": True, "needs_cover_letter": True, "reason": f"probe_error:{e}"}
+        finally:
+            await page.close()
+
+    async def apply(
+        self,
+        job: Job,
+        resume_pdf_path: str,
+        cover_letter_text: str,
+        resume_data: dict | None = None,
+        non_interactive: bool = False,
+        cover_letter_path: str | None = None,
+    ) -> bool:
         """
         Returns True if application was submitted successfully.
         Platform-specific implementation required.

@@ -2,6 +2,7 @@
 Indeed scraper + Quick Apply handler.
 """
 
+import logging
 import re
 import asyncio
 from typing import AsyncIterator
@@ -10,6 +11,8 @@ from playwright.async_api import Page
 
 from database import Job
 from scrapers.base_scraper import BaseScraper
+
+log = logging.getLogger("jobsearch")
 
 
 class IndeedScraper(BaseScraper):
@@ -24,11 +27,12 @@ class IndeedScraper(BaseScraper):
             f"?q={query.replace(' ', '+')}"
             f"&l=Remote"
             f"&sc=0kf%3Aattr(DSQF7)%3B"  # remote filter
-            f"&fromage=1"                  # last 24 hours
+            f"&fromage=7"                   # last 7 days
             f"&sort=date"
         )
         await page.goto(search_url, wait_until="domcontentloaded")
         await self.human_delay(2000, 3000)
+        log.info("[Indeed] After goto search URL: %s", page.url)
 
         # Handle login wall
         if "login" in page.url or "signin" in page.url or "auth" in page.url:
@@ -51,7 +55,17 @@ class IndeedScraper(BaseScraper):
             await self.human_delay(1000, 1500)
 
             # Each job card
-            cards = await page.query_selector_all(".job_seen_beacon, .resultContent")
+            cards = await page.query_selector_all(
+                ".job_seen_beacon, .resultContent, "
+                "[data-testid='slider_item'], "
+                ".css-1m4cuuf"
+            )
+
+            log.info("[Indeed] Found %d cards on page (URL: %s)", len(cards), page.url)
+            if not cards:
+                break  # no cards found, stop paginating
+
+            found_on_page = 0
             for card in cards:
                 if count >= max_results:
                     break
@@ -59,10 +73,14 @@ class IndeedScraper(BaseScraper):
                     job = await self._parse_card(page, card)
                     if job:
                         count += 1
+                        found_on_page += 1
                         yield job
                         await self.human_delay(300, 600)
                 except Exception:
                     pass
+
+            if count >= max_results or found_on_page == 0:
+                break
 
             # Next page
             next_btn = await page.query_selector("a[data-testid='pagination-page-next']")
@@ -94,11 +112,27 @@ class IndeedScraper(BaseScraper):
             await detail.goto(href, wait_until="domcontentloaded")
             await self.human_delay(1500, 2500)
 
-            title = await self._text(detail, "h1.jobsearch-JobInfoHeader-title, h1[data-testid='simpleHeader']")
-            company = await self._text(detail, "[data-testid='inlineHeader-companyName'], .icl-u-lg-mr--sm")
-            location = await self._text(detail, "[data-testid='job-location'], .icl-IconedList-item")
-            description = await self._text(detail, "#jobDescriptionText, .jobsearch-jobDescriptionText")
-            salary = await self._text(detail, "#salaryInfoAndJobType, .attribute_snippet", default="")
+            title = await self._text(detail,
+                "h1.jobsearch-JobInfoHeader-title, "
+                "h1[data-testid='simpleHeader'], "
+                "h1[data-testid='jobsearch-JobInfoHeader-title']")
+            company = await self._text(detail,
+                "[data-testid='inlineHeader-companyName'], "
+                "[data-testid='company-name'], "
+                ".icl-u-lg-mr--sm")
+            location = await self._text(detail,
+                "[data-testid='job-location'], "
+                "[data-testid='inlineHeader-location'], "
+                ".icl-IconedList-item")
+            description = await self._text(detail,
+                "#jobDescriptionText, "
+                ".jobsearch-jobDescriptionText, "
+                "[data-testid='jobsearch-JobComponent-description']")
+            salary = await self._text(detail,
+                "#salaryInfoAndJobType, "
+                ".attribute_snippet, "
+                "[data-testid='jobsearch-JobMetadataHeader-salaryContainer']",
+                default="")
 
             if not title or not description:
                 return None
@@ -128,7 +162,9 @@ class IndeedScraper(BaseScraper):
 
     # ── Quick Apply ───────────────────────────────────────────────────────────
 
-    async def apply(self, job: Job, resume_pdf_path: str, cover_letter_text: str) -> bool:
+    async def apply(self, job: Job, resume_pdf_path: str, cover_letter_text: str,
+                    resume_data: dict | None = None, non_interactive: bool = False,
+                    cover_letter_path: str | None = None) -> bool:
         page = await self.new_page()
         try:
             await page.goto(job.url, wait_until="domcontentloaded")

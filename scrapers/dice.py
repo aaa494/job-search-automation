@@ -2,10 +2,13 @@
 Dice.com scraper (great for DevOps/cloud roles in the US).
 """
 
+import logging
 import re
 import asyncio
 import json
 from typing import AsyncIterator
+
+log = logging.getLogger("jobsearch")
 
 from playwright.async_api import Page
 
@@ -33,6 +36,11 @@ class DiceScraper(BaseScraper):
             f"&language=en"
         )
         await page.goto(search_url, wait_until="domcontentloaded")
+        # Wait for Dice web components to render (they use custom elements)
+        try:
+            await page.wait_for_selector("dhi-job-card, [data-cy='search-card']", timeout=8000)
+        except Exception:
+            pass
         await self.human_delay(2000, 3000)
 
         count = 0
@@ -42,34 +50,39 @@ class DiceScraper(BaseScraper):
             await self.scroll_slowly(page, 1500)
             await self.human_delay(1000, 1500)
 
-            # Dice uses dhi-job-card components
-            cards = await page.query_selector_all("dhi-job-card, .card.search-card")
-            if not cards:
-                break
+            # Extract job links by URL pattern — robust against web component internals
+            hrefs = await page.evaluate("""
+                () => [...document.querySelectorAll('a[href*="/job-detail/"]')]
+                      .map(a => a.href)
+                      .filter((v, i, arr) => arr.indexOf(v) === i)
+            """)
+            log.info("[Dice] JS evaluate found %d job links (URL: %s)", len(hrefs), page.url)
 
-            for card in cards:
+            if not hrefs:
+                break  # no job links found
+
+            found_on_page = 0
+            for href in hrefs:
                 if count >= max_results:
                     break
                 try:
-                    link_el = await card.query_selector("a.card-title-link, a[data-cy='card-title-link']")
-                    if not link_el:
-                        continue
-                    href = await link_el.get_attribute("href")
-                    if not href:
-                        continue
                     if not href.startswith("http"):
                         href = self.BASE + href
 
-                    job_id_match = re.search(r"/detail/([^/?]+)", href)
+                    job_id_match = re.search(r"/job-detail/([^/?]+)", href)
                     job_id = job_id_match.group(1) if job_id_match else href[-24:]
 
                     job = await self._get_details(href, job_id)
                     if job:
                         count += 1
+                        found_on_page += 1
                         yield job
                         await self.human_delay(400, 800)
                 except Exception:
                     pass
+
+            if count >= max_results or found_on_page == 0:
+                break
 
             # Next page
             next_btn = await page.query_selector("li.pagination-next a, button[data-cy='pagination-next']")
@@ -86,28 +99,76 @@ class DiceScraper(BaseScraper):
         detail = await self.new_page()
         try:
             await detail.goto(url, wait_until="domcontentloaded")
-            await self.human_delay(1200, 2000)
+            # Wait for Dice's web components to render
+            try:
+                await detail.wait_for_selector("h1, #jobDescription, [data-testid='jobDescription']", timeout=8000)
+            except Exception:
+                pass
+            await self.human_delay(1500, 2500)
 
-            title = await self._text(detail, "h1[data-cy='jobTitle'], .jobTitle h1")
-            company = await self._text(detail, "[data-cy='companyNameLink'], .company-name")
-            location = await self._text(detail, "[data-cy='location'], .location")
-            description = await self._text(detail, "#jobDescription, .job-description")
-            salary = await self._text(detail, ".salary, [data-cy='salary']", default="")
+            final_url = detail.url
+            log.debug("[Dice] Detail page landed on: %s", final_url)
 
-            if not title or not description:
+            data = await detail.evaluate("""
+                () => {
+                    const h1 = document.querySelector('h1');
+                    const title = h1 ? h1.innerText.trim() : '';
+
+                    const companyEl = document.querySelector(
+                        '[data-cy="companyNameLink"], .company-name, ' +
+                        'a[class*="company"], [class*="company-name"], ' +
+                        '[class*="employer"], a[href*="/company/"]'
+                    );
+                    // Fallback: find text near the h1
+                    let company = companyEl ? companyEl.innerText.trim() : '';
+                    if (!company) {
+                        const h1 = document.querySelector('h1');
+                        const next = h1 && h1.nextElementSibling;
+                        if (next) company = next.innerText.trim().split('\\n')[0];
+                    }
+
+                    const locEl = document.querySelector(
+                        '[data-cy="location"], .location, li[class*="location"]'
+                    );
+                    const location = locEl ? locEl.innerText.trim() : '';
+
+                    const descEl = document.querySelector(
+                        '#jobDescription, [data-testid="jobDescription"], ' +
+                        '[class*="jobDescription"], .job-description'
+                    );
+                    const description = descEl
+                        ? descEl.innerText.trim()
+                        : document.body.innerText.slice(0, 4000);
+
+                    return { title, company, location, description };
+                }
+            """)
+
+            title = data.get("title", "")
+            company = data.get("company", "")
+            location = data.get("location", "")
+            description = data.get("description", "")
+
+            log.debug("[Dice] Extracted title=%r company=%r desc_len=%d",
+                      title, company, len(description))
+
+            if not title or len(description) < 50:
+                log.warning("[Dice] Skipped job_id=%s: title=%r desc_len=%d (URL: %s)",
+                            job_id, title, len(description), final_url)
                 return None
 
             return Job(
                 platform=self.platform,
                 job_id=job_id,
-                title=title.strip(),
-                company=company.strip(),
-                location=location.strip(),
+                title=title,
+                company=company,
+                location=location,
                 url=url,
-                description=description.strip(),
-                salary=salary.strip(),
+                description=description[:5000],
+                salary="",
             )
-        except Exception:
+        except Exception as e:
+            log.warning("[Dice] _get_details exception for %s: %s", url, e)
             return None
         finally:
             await detail.close()
@@ -120,8 +181,13 @@ class DiceScraper(BaseScraper):
         except Exception:
             return default
 
-    async def apply(self, job: Job, resume_pdf_path: str, cover_letter_text: str) -> bool:
-        """Dice redirects to external apply URLs."""
+    async def apply(self, job: Job, resume_pdf_path: str, cover_letter_text: str,
+                    resume_data: dict | None = None, non_interactive: bool = False,
+                    cover_letter_path: str | None = None) -> bool:
+        """Dice redirects to external apply URLs — follow link then use Claude Vision form filler."""
+        from scrapers.employer_site import fill_employer_form
+        if not resume_data:
+            return False
         page = await self.new_page()
         try:
             await page.goto(job.url, wait_until="domcontentloaded")
@@ -131,33 +197,36 @@ class DiceScraper(BaseScraper):
                 "a[data-cy='apply-button'], button[data-cy='apply-button'], "
                 "a.btn-apply, button:has-text('Apply Now')"
             )
-            if not apply_btn:
-                return False
+            if apply_btn:
+                href = await apply_btn.get_attribute("href")
+                if href and href.startswith("http"):
+                    await page.goto(href, wait_until="domcontentloaded")
+                    await self.human_delay(2000, 3000)
+                else:
+                    # Listen for popup
+                    popup_future: asyncio.Future = asyncio.get_event_loop().create_future()
+                    def _on_popup(p):
+                        if not popup_future.done():
+                            popup_future.set_result(p)
+                    page.context.on("page", _on_popup)
+                    await apply_btn.click()
+                    await self.human_delay(2500, 3500)
+                    page.context.remove_listener("page", _on_popup)
+                    if popup_future.done():
+                        page = popup_future.result()
+                        await page.wait_for_load_state("domcontentloaded")
 
-            # Get the external URL if it's a link
-            href = await apply_btn.get_attribute("href")
-            if href and href.startswith("http"):
-                await page.goto(href, wait_until="domcontentloaded")
-                await self.human_delay(2000, 3000)
-
-                file_input = await page.query_selector("input[type='file']")
-                if file_input:
-                    await file_input.set_input_files(resume_pdf_path)
-                    await self.human_delay(800, 1200)
-
-                print(f"\n[Dice] External application opened: {href}")
-                print("  Please complete the application manually.")
-                input("  Press ENTER when done: ")
-                return True
-
-            await apply_btn.click()
-            await self.human_delay(2000, 3000)
-            print(f"\n[Dice] Application page opened for {job.title}.")
-            input("  Complete the form and press ENTER: ")
-            return True
+            return await fill_employer_form(
+                page, resume_data, cover_letter_text, resume_pdf_path,
+                cover_letter_path=cover_letter_path,
+                non_interactive=non_interactive,
+            )
 
         except Exception as e:
-            print(f"[Dice] Apply error: {e}")
+            log.warning("[Dice] Apply error for %s: %s", job.url, e)
             return False
         finally:
-            await page.close()
+            try:
+                await page.close()
+            except Exception:
+                pass
