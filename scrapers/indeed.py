@@ -9,6 +9,7 @@ from typing import AsyncIterator
 
 from playwright.async_api import Page
 
+from config import SEARCH_CONFIG
 from database import Job
 from scrapers.base_scraper import BaseScraper
 
@@ -22,12 +23,13 @@ class IndeedScraper(BaseScraper):
     async def search_jobs(self, query: str, max_results: int) -> AsyncIterator[Job]:
         page = await self.new_page()
 
+        _days = SEARCH_CONFIG.get("posted_within_days", 3)
         search_url = (
             f"{self.BASE}/jobs"
             f"?q={query.replace(' ', '+')}"
             f"&l=Remote"
             f"&sc=0kf%3Aattr(DSQF7)%3B"  # remote filter
-            f"&fromage=7"                   # last 7 days
+            f"&fromage={_days}"
             f"&sort=date"
         )
         await page.goto(search_url, wait_until="domcontentloaded")

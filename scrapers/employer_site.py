@@ -211,7 +211,8 @@ async def probe_form(page: Page, url: str) -> dict:
 
 Answer two questions about what you see:
 1. Can a script fully fill and submit this form automatically?
-   - NO (can_automate=false) ONLY if:
+   - NO (can_automate=false) if ANY of these is true:
+       * The page shows a 404, "does not exist", "not found", "page unavailable", "job no longer available", "listing has expired", or any other error indicating the job is gone
        * An interactive visual CAPTCHA challenge is shown (e.g. "click all traffic lights")
        * SMS or phone verification code is required
        * A hardware security key or authenticator app (MFA/2FA) is required
@@ -270,29 +271,49 @@ async def fill_employer_form(
     p = resume_data["personal"]
 
     candidate_info = {
+        # Identity
         "full_name":            p["name"],
-        "first_name":           p["name"].split()[0],
-        "last_name":            "Abdyk",          # always use legal last name
-        "email":                p["email"],
-        "phone":                p.get("phone", "773-757-2279"),
-        "city":                 "Chicago",
-        "location":             "Chicago, IL",
-        "country":              "United States",
+        "preferred_name":       "Aidarbek Abdyk",
+        "first_name":           "Aidarbek",
+        "last_name":            "Abdyk",
+        # Contact
+        "email":                "aidarbek.a@yahoo.com",
+        "phone":                "773-757-2279",
+        "phone_full":           "+1 773 757 2279",
         "country_code":         "+1",
-        "linkedin":             p.get("linkedin", ""),
+        # Location
+        "city":                 "Chicago",
+        "state":                "Illinois",
+        "state_code":           "IL",
+        "zip":                  "60601",
+        "country":              "United States",
+        "country_full":         "United States of America",
+        "location":             "Chicago, IL, USA",
+        "location_city_state":  "Chicago, IL",
+        # Profiles
+        "linkedin":             p.get("linkedin", "https://www.linkedin.com/in/aidarbek-devops/"),
         "github":               p.get("github", ""),
-        "cover_letter_excerpt": cover_letter[:800],
+        "website":              p.get("linkedin", "https://www.linkedin.com/in/aidarbek-devops/"),
+        # Job preferences
         "years_experience":     "7",
         "authorized_to_work":   "Yes",
         "requires_sponsorship": "No",
+        "visa_status":          "Green Card",
         "salary_expectation":   "130000",
         "availability":         "2 weeks",
         "preferred_work":       "Remote",
-        "visa_status":          "Green Card",
-        "gender":               "Prefer not to say",
-        "ethnicity":            "Prefer not to say",
+        # EEO / diversity (voluntary disclosures)
+        "gender":               "Male",
+        "hispanic_latino":      "No",
+        "ethnicity":            "Asian",
+        "race":                 "Asian (Central Asian)",
         "veteran":              "No",
         "disability":           "No",
+        # Common yes/no questions
+        "referred_by_employee": "No",
+        "previously_employed":  "No",
+        # Cover letter
+        "cover_letter_excerpt": cover_letter[:800],
     }
 
     # Merge any previously saved Q&A answers into candidate_info
@@ -328,10 +349,7 @@ async def fill_employer_form(
         if action == last_action and action in ("fill_and_next", "next", "unknown"):
             stuck_count += 1
             if stuck_count >= 3:
-                log.warning("[form] Stuck in loop (action=%r for %d steps) — escalating to Computer Use", action, stuck_count)
-                result = await _escalate_to_computer_use(page, candidate_info, cover_letter, resume_pdf_path)
-                if result:
-                    return True
+                log.warning("[form] Stuck in loop (action=%r for %d steps) — giving up", action, stuck_count)
                 await _notify_stuck_telegram(page, candidate_info)
                 return False
         else:
@@ -360,58 +378,67 @@ async def fill_employer_form(
                 last_action = ""  # reset stuck detector after navigation
                 continue
             else:
-                log.warning("[form] Could not get confirmation email — escalating to Computer Use")
-                result = await _escalate_to_computer_use(page, candidate_info, cover_letter, resume_pdf_path)
-                if result:
-                    return True
+                log.warning("[form] Could not get confirmation email — giving up")
                 await _notify_stuck_telegram(page, candidate_info)
                 return False
 
-        if action == "login_required":
-            if login_attempts >= 2:
-                log.warning("[form] Login failed after %d attempts — escalating to Computer Use", login_attempts)
-                result = await _escalate_to_computer_use(page, candidate_info, cover_letter, resume_pdf_path)
-                if result:
-                    return True
-                await _notify_stuck_telegram(page, candidate_info)
-                return False
-            login_attempts += 1
-            pw = _get_or_create_password(page.url)
-            log.info("[form] Auto-login with email=%s", candidate_info["email"])
-            filled = await _attempt_login(page, candidate_info["email"], pw)
-            if not filled:
-                log.warning("[form] Could not fill login form — escalating to Computer Use")
-                result = await _escalate_to_computer_use(page, candidate_info, cover_letter, resume_pdf_path)
-                if result:
-                    return True
-                await _notify_stuck_telegram(page, candidate_info)
-                return False
-            await asyncio.sleep(3)
-            continue
-
-        if action == "register":
+        if action in ("login_required", "register"):
             domain = urlparse(page.url).netloc
-            if domain in registered_domains:
-                # Already tried registering — attempt login with stored credentials
-                pw = _get_or_create_password(page.url)
-                log.info("[form] Already registered at %s — trying login", domain)
-                await _attempt_login(page, candidate_info["email"], pw)
-                await asyncio.sleep(3)
-                login_attempts += 1
-                if login_attempts >= 3:
-                    log.warning("[form] Registration+login loop at %s — escalating to Computer Use", domain)
-                    result = await _escalate_to_computer_use(page, candidate_info, cover_letter, resume_pdf_path)
-                    if result:
-                        return True
+
+            if domain not in registered_domains:
+                # ── First time on this domain ─────────────────────────────────
+                if action == "login_required":
+                    # We're on a login page — find and click the Sign Up link
+                    log.info("[form] Login page — scanning for Sign Up link")
+                    switched = await _click_signup_link(page)
+                    if switched:
+                        # Next iteration will see the registration form
+                        continue
+                    # No signup link found anywhere — can't create an account
+                    log.warning("[form] No Sign Up link found on login page — giving up")
                     await _notify_stuck_telegram(page, candidate_info)
                     return False
-                continue
-            registered_domains.add(domain)
-            pw = _get_or_create_password(page.url)
-            log.info("[form] Auto-registering at %s with email=%s", domain, candidate_info["email"])
-            await _attempt_register(page, candidate_info, pw)
-            await asyncio.sleep(3)
-            # After registering, check if we land on an email-confirmation page (DOM check)
+
+                # action == "register": Claude sees an actual registration form
+                registered_domains.add(domain)
+                pw = _get_or_create_password(page.url)
+                log.info("[form] Auto-registering at %s with email=%s", domain, candidate_info["email"])
+                await _attempt_register(page, candidate_info, pw)
+                await asyncio.sleep(3)
+
+                # Check if the site says "account already exists"
+                page_text = (await page.content()).lower()
+                account_exists_phrases = (
+                    "already exists", "already registered", "already have an account",
+                    "email is already", "already in use", "account with this email",
+                    "try logging in", "sign in instead",
+                )
+                if any(p in page_text for p in account_exists_phrases):
+                    log.info("[form] Account already exists at %s — switching to login", domain)
+                    pw = _get_or_create_password(page.url)
+                    # Navigate to login page first (we're still on the register page)
+                    navigated = await _click_login_link(page)
+                    if navigated:
+                        await asyncio.sleep(2)
+                    await _attempt_login(page, candidate_info["email"], pw)
+                    await asyncio.sleep(3)
+
+            else:
+                # ── Already tried registering on this domain → login ──────────
+                login_attempts += 1
+                if login_attempts > 3:
+                    log.warning("[form] Login loop at %s after registration — giving up", domain)
+                    await _notify_stuck_telegram(page, candidate_info)
+                    return False
+                pw = _get_or_create_password(page.url)
+                log.info("[form] Already registered at %s — logging in (attempt %d)", domain, login_attempts)
+                # Try to navigate to login page if we're still on a register/apply page
+                navigated = await _click_login_link(page)
+                if navigated:
+                    await asyncio.sleep(2)
+                await _attempt_login(page, candidate_info["email"], pw)
+                await asyncio.sleep(3)
+            # Check if we land on an email-confirmation page (DOM check)
             # before the next Claude Vision screenshot
             page_text = (await page.content()).lower()
             email_confirm_phrases = (
@@ -514,6 +541,82 @@ async def fill_employer_form(
 
 # ── Login / Registration ──────────────────────────────────────────────────────
 
+async def _click_signup_link(page: Page) -> bool:
+    """
+    Scan all visible links and buttons for signup-related text and click the first match.
+    Much more robust than fixed CSS selectors — catches 'Signup', 'Sign Up',
+    'sign up', 'Register', 'Create account', etc. in any format.
+    Skips OAuth/SSO buttons (Google, Facebook, LinkedIn, GitHub, Apple).
+    """
+    SIGNUP_KEYWORDS = {
+        "sign up", "signup", "sign-up", "register", "create account",
+        "create an account", "new account", "join", "get started",
+        "don't have an account", "dont have an account", "no account",
+    }
+    SKIP_KEYWORDS = {
+        "google", "facebook", "linkedin", "github", "apple", "microsoft",
+        "twitter", "sso", "saml", "oauth",
+    }
+
+    try:
+        elements = await page.query_selector_all("a, button, [role='button'], [role='link']")
+        for el in elements:
+            try:
+                if not await el.is_visible():
+                    continue
+                text = (await el.inner_text()).strip().lower()
+                if not text:
+                    continue
+                # Skip OAuth buttons
+                if any(kw in text for kw in SKIP_KEYWORDS):
+                    continue
+                # Match signup keywords
+                if any(kw in text for kw in SIGNUP_KEYWORDS):
+                    await el.click()
+                    log.info("[form] Clicked sign-up element with text: %r", text[:60])
+                    await asyncio.sleep(2)
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
+async def _click_login_link(page: Page) -> bool:
+    """
+    Scan all visible links and buttons for login-related text and click the first match.
+    Used to navigate from a registration page to the login page.
+    Skips OAuth/SSO buttons.
+    """
+    LOGIN_KEYWORDS = {
+        "log in", "login", "sign in", "signin",
+        "already have an account", "have an account", "existing account",
+    }
+    SKIP_KEYWORDS = {"google", "facebook", "linkedin", "github", "apple", "microsoft", "twitter", "sso", "saml", "oauth"}
+    try:
+        elements = await page.query_selector_all("a, button, [role='button'], [role='link']")
+        for el in elements:
+            try:
+                if not await el.is_visible():
+                    continue
+                text = (await el.inner_text()).strip().lower()
+                if not text:
+                    continue
+                if any(kw in text for kw in SKIP_KEYWORDS):
+                    continue
+                if any(kw in text for kw in LOGIN_KEYWORDS):
+                    await el.click()
+                    log.info("[form] Clicked login element with text: %r", text[:60])
+                    await asyncio.sleep(2)
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
 async def _attempt_login(page: Page, email: str, password: str) -> bool:
     """Try to fill an email+password login form and submit it."""
     filled = False
@@ -544,15 +647,28 @@ async def _attempt_login(page: Page, email: str, password: str) -> bool:
         clicked = False
         for btn_text in login_button_texts:
             try:
+                candidates = []
                 el = await page.query_selector(f"button:has-text('{btn_text}')")
-                if not el:
-                    el = await page.query_selector(f"[role='button']:has-text('{btn_text}')")
-                if not el:
-                    el = await page.query_selector(f"input[type='submit'][value*='{btn_text}']")
-                if el and await el.is_visible() and await el.is_enabled():
+                if el:
+                    candidates.append(el)
+                el = await page.query_selector(f"[role='button']:has-text('{btn_text}')")
+                if el:
+                    candidates.append(el)
+                el = await page.query_selector(f"input[type='submit'][value*='{btn_text}']")
+                if el:
+                    candidates.append(el)
+                for el in candidates:
+                    if not (await el.is_visible() and await el.is_enabled()):
+                        continue
+                    text = (await el.inner_text()).strip()
+                    if _is_oauth_button(text):
+                        log.info("[form] Skipping OAuth login button: %r", text[:40])
+                        continue
                     await el.click()
-                    log.info("[form] Clicked login button: %r", btn_text)
+                    log.info("[form] Clicked login button: %r", text[:40])
                     clicked = True
+                    break
+                if clicked:
                     break
             except Exception:
                 continue
@@ -592,7 +708,7 @@ async def _attempt_register(page: Page, candidate_info: dict, password: str) -> 
     ], last)
 
     await _fill_if_found([
-        'input[name*="name" i][not([name*="first"]):not([name*="last"])]',
+        'input[name*="name" i]:not([name*="first" i]):not([name*="last" i])',
         'input[placeholder*="full name" i]', 'input[id*="fullname" i]',
         'input[aria-label*="full name" i]', 'input[name="name"]',
     ], full)
@@ -644,14 +760,25 @@ async def _attempt_register(page: Page, candidate_info: dict, password: str) -> 
     ]
     for btn_text in register_button_texts:
         try:
+            candidates = []
             el = await page.query_selector(f"button:has-text('{btn_text}')")
-            if not el:
-                el = await page.query_selector(f"[role='button']:has-text('{btn_text}')")
-            if not el:
-                el = await page.query_selector(f"input[type='submit'][value*='{btn_text}']")
-            if el and await el.is_visible() and await el.is_enabled():
+            if el:
+                candidates.append(el)
+            el = await page.query_selector(f"[role='button']:has-text('{btn_text}')")
+            if el:
+                candidates.append(el)
+            el = await page.query_selector(f"input[type='submit'][value*='{btn_text}']")
+            if el:
+                candidates.append(el)
+            for el in candidates:
+                if not (await el.is_visible() and await el.is_enabled()):
+                    continue
+                text = (await el.inner_text()).strip()
+                if _is_oauth_button(text):
+                    log.info("[form] Skipping OAuth register button: %r", text[:40])
+                    continue
                 await el.click()
-                log.info("[form] Clicked registration button: %r", btn_text)
+                log.info("[form] Clicked registration button: %r", text[:40])
                 return True
         except Exception:
             continue
@@ -760,16 +887,27 @@ async def _direct_fill_common_fields(page: Page, info: dict) -> None:
     mapping = [
         # (selectors_list, value)
         (['input[name*="first_name" i]', 'input[id*="first_name" i]', 'input[id="first" i]',
-          'input[autocomplete="given-name"]'], info["first_name"]),
+          'input[name="firstName" i]', 'input[autocomplete="given-name"]'], info["first_name"]),
         (['input[name*="last_name" i]', 'input[id*="last_name" i]', 'input[id="last" i]',
-          'input[autocomplete="family-name"]'], info["last_name"]),
+          'input[name="lastName" i]', 'input[autocomplete="family-name"]'], info["last_name"]),
         (['input[name*="email" i]', 'input[id*="email" i]', 'input[type="email"]',
           'input[autocomplete="email"]'], info["email"]),
         (['input[name*="phone" i]', 'input[id*="phone" i]', 'input[type="tel"]',
           'input[autocomplete="tel"]'], info["phone"]),
         (['input[name*="city" i]', 'input[id*="city" i]',
           'input[name*="location" i]', 'input[id*="location" i]'], info["city"]),
-        (['input[name*="linkedin" i]', 'input[id*="linkedin" i]'], info["linkedin"]),
+        (['input[name*="state" i]', 'input[id*="state" i]'], "IL"),
+        (['input[name*="zip" i]', 'input[id*="zip" i]',
+          'input[name*="postal" i]', 'input[id*="postal" i]'], "60601"),
+        (['input[name*="address" i]', 'input[id*="address" i]',
+          'input[autocomplete="street-address"]'], "Chicago, IL"),
+        (['input[name*="linkedin" i]', 'input[id*="linkedin" i]',
+          'input[placeholder*="linkedin" i]'], info["linkedin"]),
+        (['input[name*="github" i]', 'input[id*="github" i]',
+          'input[placeholder*="github" i]'], info.get("github", "")),
+        (['input[name*="website" i]', 'input[id*="website" i]',
+          'input[name*="portfolio" i]', 'input[placeholder*="website" i]',
+          'input[placeholder*="portfolio" i]'], info.get("website", info.get("linkedin", ""))),
     ]
     for selectors, value in mapping:
         if not value:
@@ -802,16 +940,63 @@ async def _direct_fill_common_fields(page: Page, info: dict) -> None:
             except Exception:
                 continue
 
-    # Country select
+    # Country select (dropdown)
     country_selectors = [
         'select[name*="country" i]', 'select[id*="country" i]',
-        'select[name*="Country" i]', 'select[id*="Country" i]',
     ]
     for sel in country_selectors:
         try:
             el = await page.query_selector(sel)
             if el and await el.is_visible():
                 for val in ("United States", "United States of America", "US", "USA"):
+                    try:
+                        await el.select_option(label=val)
+                        break
+                    except Exception:
+                        try:
+                            await el.select_option(value=val)
+                            break
+                        except Exception:
+                            continue
+                break
+        except Exception:
+            continue
+
+    # Phone country code dropdown (e.g. "+1 United States")
+    phone_code_selectors = [
+        'select[name*="country_code" i]', 'select[id*="country_code" i]',
+        'select[name*="phone_code" i]', 'select[id*="phone_code" i]',
+        'select[name*="dial_code" i]', 'select[id*="dial_code" i]',
+        'select[aria-label*="country code" i]', 'select[aria-label*="phone code" i]',
+    ]
+    for sel in phone_code_selectors:
+        try:
+            el = await page.query_selector(sel)
+            if el and await el.is_visible():
+                for val in ("+1", "1", "US", "United States"):
+                    try:
+                        await el.select_option(label=val)
+                        break
+                    except Exception:
+                        try:
+                            await el.select_option(value=val)
+                            break
+                        except Exception:
+                            continue
+                break
+        except Exception:
+            continue
+
+    # State/province select
+    state_selectors = [
+        'select[name*="state" i]', 'select[id*="state" i]',
+        'select[name*="province" i]', 'select[id*="province" i]',
+    ]
+    for sel in state_selectors:
+        try:
+            el = await page.query_selector(sel)
+            if el and await el.is_visible():
+                for val in ("Illinois", "IL"):
                     try:
                         await el.select_option(label=val)
                         break
@@ -1231,240 +1416,6 @@ def _fetch_confirmation_link(domain: str, timeout_secs: int = 300) -> str | None
     return None
 
 
-async def _escalate_to_computer_use(
-    page: Page,
-    candidate_info: dict,
-    cover_letter: str,
-    resume_pdf_path: str,
-) -> bool:
-    """
-    Escalation entry point: try real macOS Computer Use first (visible on screen),
-    fall back to the in-browser Vision loop if macOS CU is unavailable.
-    """
-    url = page.url
-    try:
-        from computer_use_macos import run_computer_use
-        log.info("[CU] Escalating to macOS Computer Use for %s", url)
-        return await run_computer_use(
-            url=url,
-            resume_pdf_path=resume_pdf_path,
-            cover_letter=cover_letter,
-            candidate_info=candidate_info,
-            max_turns=50,
-            open_browser=True,
-        )
-    except ImportError:
-        log.warning("[CU] computer_use_macos not available — falling back to in-browser loop")
-    except Exception as e:
-        log.warning("[CU] macOS Computer Use error: %s — falling back to in-browser loop", e)
-
-    # Fallback: old in-browser Vision loop
-    return await _computer_use_loop(page, candidate_info, cover_letter, resume_pdf_path)
-
-
-async def _computer_use_loop(
-    page: Page,
-    candidate_info: dict,
-    cover_letter: str,
-    resume_path: str,
-    max_turns: int = 20,
-) -> bool:
-    """
-    Claude Computer Use fallback: Vision loop that takes direct browser control.
-
-    Each turn:
-      1. Take a full screenshot of the current page.
-      2. Ask Claude what single action to take next (JSON response).
-      3. Execute that action via Playwright.
-      4. Repeat until submitted or max turns exhausted.
-
-    Action JSON format Claude must return:
-    {
-      "action": "click|type|press|scroll|select|upload|done|failed",
-      "selector": "CSS selector (preferred over coords)",
-      "x": 0, "y": 0,         // fallback coords if selector not found
-      "text":  "...",          // for type action
-      "key":   "Enter",        // for press action
-      "delta_y": 300,          // for scroll (pixels, positive=down)
-      "value": "...",          // for select_option
-      "reason": "..."
-    }
-    """
-    import os
-
-    log.info("[CU] Starting Computer Use loop for %s", page.url)
-
-    # Notify Telegram that CU is starting
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-    if token and chat_id:
-        try:
-            screenshot_bytes = await page.screenshot(full_page=False)
-            _telegram_send_photo(
-                token, chat_id, screenshot_bytes,
-                f"🤖 <b>Stuck on form — Claude Computer Use taking over</b>\n"
-                f"<i>{page.url[:80]}</i>\n\n"
-                f"I'll try to finish the application automatically."
-            )
-        except Exception:
-            pass
-
-    candidate_summary = json.dumps({
-        k: v for k, v in candidate_info.items()
-        if k in ("full_name", "first_name", "last_name", "email", "phone",
-                 "city", "location", "linkedin", "github", "years_experience",
-                 "authorized_to_work", "requires_sponsorship", "salary_expectation",
-                 "availability", "visa_status")
-    }, indent=2)
-
-    prompt_template = f"""You are controlling a browser to fill a job application form.
-
-Candidate info:
-{candidate_summary}
-
-Cover letter excerpt (use if a motivation/cover letter text field is visible):
-{cover_letter[:400]}
-
-Your job: decide the single best next action to advance the application toward submission.
-
-Rules:
-- Fill ONLY empty required fields (marked with * or clearly required).
-- For file upload inputs (input[type=file]): use action="upload" — the system handles the file.
-- After filling all visible fields, click the Next/Continue/Submit button.
-- If you see a confirmation/thank-you page: action="done".
-- If you are certain the form cannot be completed automatically: action="failed".
-- Prefer CSS selector over coordinates — it's more reliable.
-- For clicking buttons, use the exact visible text in the selector: button:has-text('Next').
-
-Return ONLY valid JSON, no markdown:
-{{
-  "action": "click|type|press|scroll|select|upload|done|failed",
-  "selector": "CSS selector or empty string",
-  "x": 0,
-  "y": 0,
-  "text": "",
-  "key": "",
-  "delta_y": 0,
-  "value": "",
-  "reason": "one sentence"
-}}"""
-
-    for turn in range(max_turns):
-        await asyncio.sleep(1.0)
-        try:
-            screenshot = await page.screenshot(full_page=False)
-            b64 = base64.standard_b64encode(screenshot).decode()
-
-            resp = await _client.messages.create(
-                model=AI_CONFIG["model"],
-                max_tokens=500,
-                messages=[{"role": "user", "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
-                    {"type": "text", "text": prompt_template},
-                ]}],
-            )
-            raw = next(b.text for b in resp.content if b.type == "text").strip()
-            # Extract JSON object regardless of surrounding text or markdown fences
-            j_start = raw.find("{")
-            j_end = raw.rfind("}")
-            if j_start != -1 and j_end > j_start:
-                raw = raw[j_start:j_end + 1]
-            act = json.loads(raw)
-
-            action = act.get("action", "")
-            selector = act.get("selector", "")
-            reason = act.get("reason", "")
-            log.info("[CU] turn=%d action=%r selector=%r reason=%s", turn + 1, action, selector, reason)
-
-            if action == "done":
-                log.info("[CU] Application submitted (Computer Use detected done).")
-                return True
-
-            if action == "failed":
-                log.warning("[CU] Computer Use reports cannot complete: %s", reason)
-                return False
-
-            el = None
-            if selector:
-                try:
-                    el = await page.query_selector(selector)
-                    if el and not await el.is_visible():
-                        el = None
-                except Exception:
-                    el = None
-
-            if action == "click":
-                if el:
-                    await el.click()
-                elif act.get("x") and act.get("y"):
-                    await page.mouse.click(act["x"], act["y"])
-                await asyncio.sleep(0.8)
-
-            elif action == "type":
-                text = act.get("text", "")
-                if el:
-                    await el.click()
-                    await el.fill(text)
-                elif act.get("x") and act.get("y"):
-                    await page.mouse.click(act["x"], act["y"])
-                    await page.keyboard.type(text, delay=30)
-                await asyncio.sleep(0.4)
-
-            elif action == "press":
-                key = act.get("key", "Enter")
-                if el:
-                    await el.press(key)
-                else:
-                    await page.keyboard.press(key)
-                await asyncio.sleep(0.8)
-
-            elif action == "scroll":
-                delta_y = act.get("delta_y", 300)
-                await page.mouse.wheel(0, delta_y)
-                await asyncio.sleep(0.5)
-
-            elif action == "select":
-                value = act.get("value", "")
-                if el:
-                    for v in (value, value.title(), value.upper()):
-                        try:
-                            await el.select_option(label=v)
-                            break
-                        except Exception:
-                            try:
-                                await el.select_option(value=v)
-                                break
-                            except Exception:
-                                continue
-                await asyncio.sleep(0.4)
-
-            elif action == "upload":
-                # Upload resume to the first file input found via selector or generic
-                target = el
-                if not target:
-                    target = await page.query_selector("input[type='file']")
-                if target and resume_path and Path(resume_path).exists():
-                    try:
-                        await target.set_input_files(resume_path)
-                        await asyncio.sleep(1.0)
-                        log.info("[CU] Uploaded resume via Computer Use")
-                    except Exception as e:
-                        log.warning("[CU] Upload failed: %s", e)
-
-            # Check for confirmation after each action
-            if await _check_confirmation(page):
-                log.info("[CU] Confirmation detected after action.")
-                return True
-
-        except json.JSONDecodeError as e:
-            log.warning("[CU] Bad JSON from Claude at turn %d (raw=%r...): %s", turn + 1, raw[:120] if 'raw' in dir() else '?', e)
-        except Exception as e:
-            log.warning("[CU] Error at turn %d: %s", turn + 1, e)
-
-    log.warning("[CU] Exhausted %d turns without completing.", max_turns)
-    return False
-
-
 def _telegram_send_photo(token: str, chat_id: str, photo_bytes: bytes, caption: str):
     """Send a photo with caption to Telegram (synchronous, used in thread)."""
     boundary = "----CUBoundary7MA4YWxkTrZu0gW"
@@ -1506,8 +1457,19 @@ async def _notify_stuck_telegram(page: Page, candidate_info: dict):
         log.warning("[form] Failed to send stuck notification: %s", e)
 
 
+_OAUTH_SKIP = {
+    "google", "facebook", "linkedin", "github", "apple",
+    "microsoft", "twitter", "sso", "saml", "oauth",
+}
+
+
+def _is_oauth_button(text: str) -> bool:
+    t = text.lower()
+    return any(kw in t for kw in _OAUTH_SKIP)
+
+
 async def _click_submit(page: Page) -> bool:
-    """Click the submit/apply button."""
+    """Click the submit/apply button. Never clicks OAuth/SSO buttons."""
     selectors = [
         "button[type='submit']",
         "input[type='submit']",
@@ -1519,6 +1481,7 @@ async def _click_submit(page: Page) -> bool:
         "a:has-text('Submit Application')",
         "button:has-text('Sign Up')",
         "button:has-text('Create Account')",
+        "button:has-text('Get Started')",
         "button:has-text('Register')",
         "button:has-text('Sign In')",
         "button:has-text('Log In')",
@@ -1527,8 +1490,11 @@ async def _click_submit(page: Page) -> bool:
         try:
             el = await page.query_selector(sel)
             if el and await el.is_visible():
+                text = (await el.inner_text()).strip()
+                if _is_oauth_button(text):
+                    continue
                 await el.click()
-                log.info("[form] Clicked button: %s", sel)
+                log.info("[form] Clicked button: %s (%r)", sel, text[:40])
                 return True
         except Exception:
             pass
@@ -1563,6 +1529,11 @@ async def _click_next(page: Page, _already_clicked: set[str] | None = None) -> b
         "[data-qa='btn-submit']",
         # Ashby-specific
         "button[class*='submit']",
+        # Workable-specific: "APPLICATION" tab to start the form
+        "[role='tab']:has-text('Application')",
+        "[role='tab']:has-text('Apply')",
+        "a[role='tab']:has-text('Application')",
+        "li[role='tab']:has-text('Application')",
         # Pre-form CTAs — only used when no form-nav button is found
         "button:has-text('Apply Now')",
         "button:has-text('Apply now')",
@@ -1605,6 +1576,15 @@ async def _click_next(page: Page, _already_clicked: set[str] | None = None) -> b
         "upload", "file", "choose", "browse", "attach", "drag", "drop",
         "select file", "upload file", "upload resume", "upload cv",
         "add file", "change file",
+        # Never let the fallback click auth/OAuth buttons
+        "log in", "login", "sign in", "signin",
+        "sign in with google", "sign in with facebook", "sign in with linkedin",
+        "sign in with github", "sign in with apple", "sign in with microsoft",
+        "sign up with google", "sign up with facebook", "sign up with linkedin",
+        "sign up with github", "sign up with apple", "sign up with microsoft",
+        "continue with google", "continue with facebook", "continue with linkedin",
+        "continue with github", "continue with apple", "continue with microsoft",
+        "register with google", "register with facebook",
     }
     already = _already_clicked or set()
     try:

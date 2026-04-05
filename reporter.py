@@ -53,6 +53,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   tr:hover td {{ background: #f8f9ff; }}
   .badge {{ display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }}
   .badge-applied {{ background: #d4edda; color: #155724; }}
+  .badge-prepared {{ background: #e8d5ff; color: #5b2c8e; }}
   .badge-skipped {{ background: #f0f0f0; color: #666; }}
   .badge-rejected {{ background: #f8d7da; color: #721c24; }}
   .badge-found {{ background: #cce5ff; color: #004085; }}
@@ -308,12 +309,16 @@ def generate_report(db_path: str = None, output_path: str = None) -> str:
         score_str = f"{score:.0f}" if score else "—"
 
         resume_link = ""
-        if job["resume_path"] and Path(job["resume_path"]).exists():
-            resume_link = f'<a class="file-link" href="file://{job["resume_path"]}">📄 Resume</a><br>'
+        if job["resume_path"]:
+            rp = Path(job["resume_path"]).resolve()
+            if rp.exists():
+                resume_link = f'<a class="file-link" href="file:///{rp}">📄 Resume</a><br>'
 
         cl_link = ""
-        if job["cover_letter_path"] and Path(job["cover_letter_path"]).exists():
-            cl_link = f'<a class="file-link" href="file://{job["cover_letter_path"]}">✉ Cover Letter</a>'
+        if job["cover_letter_path"]:
+            cp = Path(job["cover_letter_path"]).resolve()
+            if cp.exists():
+                cl_link = f'<a class="file-link" href="file:///{cp}">✉ Cover Letter</a>'
 
         applied_at = (job["applied_at"] or "")[:16]
         reason = (job["relevance_reason"] or "")[:120]

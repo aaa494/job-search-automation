@@ -2,16 +2,21 @@
 Job Search Automation — main entry point.
 
 Flags:
-  (none)             Full run with manual review before each application
+  (none)             Prepare mode: find jobs, score, generate resume+cover letter,
+                     upload to Drive, sync Sheets — NO auto-apply (default)
+  --prepare          Same as (none) — explicit prepare mode
   --dry-run          Search + score + generate ONE resume/PDF/cover-letter, no submitting
-  --dry-run-apply    Like --dry-run but asks at the end whether to submit that 1 job
+  --dry-run-apply    Like --dry-run but applies 1 job automatically
   --search-only      Search + score all jobs, no applying, no file generation
-  --auto             Fully automatic (no review prompts) — for scheduler use
+  --auto             Fully automatic apply (no review prompts) — legacy scheduler use
+  --review           Full run with manual review before each application
   --report           Generate HTML report and open it
   --stats            Print stats table to terminal
   --login            Open browser to log in to platforms and save cookies (run once)
   --test             Quick scraper test: 1 platform, 1 title, 1 job, ~30 sec, no AI
                      Options: --platform=linkedin|indeed|dice|weworkremotely  --title="SRE"
+  --test-form=URL    Test just the form filler against any URL (opens browser, fills form)
+                     Example: python main.py --test-form=https://jobs.example.com/apply/123
 """
 
 import asyncio
@@ -122,7 +127,7 @@ async def process_job(
     job: Job,
     resume: dict,
     db: Database,
-    mode: str,          # "review" | "auto" | "dry_run" | "dry_run_apply" | "search_only"
+    mode: str,          # "prepare" | "review" | "auto" | "dry_run" | "dry_run_apply" | "search_only"
     scraper_cls,
     job_index: int,
     total: int,
@@ -173,6 +178,7 @@ async def process_job(
         db.save_job(job)   # dry_run*: don't persist yet so the job stays fresh for real runs
     log.info("Score: %.0f/100 — %s", score, reason)
 
+
     color = "green" if score >= 80 else "yellow" if score >= 65 else "red"
     console.print(
         f"[bold]{job.title}[/bold] @ [cyan]{job.company}[/cyan]  "
@@ -187,8 +193,9 @@ async def process_job(
         db.update_status(job, "skipped")
         return False
 
-    # Notify Telegram about a promising match
-    await tg.notify_match_found(job.title, job.company, job.platform, score, reason, job.url)
+    # Notify Telegram about a promising match (skip in prepare mode — digest sent at end)
+    if mode != "prepare":
+        await tg.notify_match_found(job.title, job.company, job.platform, score, reason, job.url)
 
     if mode == "search_only":
         return False
@@ -200,7 +207,7 @@ async def process_job(
         return False
 
     # ── Probe: check if application can be automated BEFORE generating files ──
-    # Skip probe in dry_run (no apply anyway) and review (user decides manually)
+    # Skip probe in dry_run, review, and prepare (no auto-apply in those modes)
     probe = {"can_automate": True, "needs_cover_letter": True, "reason": "skipped"}
     if mode in ("auto", "dry_run_apply"):
         with console.status("Checking if application can be automated..."):
@@ -291,6 +298,14 @@ async def process_job(
         if sheets_enabled() and (pdf_link or cl_link):
             update_job_links(job.platform, job.job_id, pdf_link, cl_link)
 
+    # ── Prepare mode: files ready, mark job and stop — user applies manually ──
+    if mode == "prepare":
+        db.update_status(job, "prepared")
+        if drive_enabled() and (pdf_link or cl_link):
+            db.save_drive_links(job, pdf_link or "", cl_link or "")
+        console.print(f"  [green]✓ Prepared[/green] — resume + cover letter ready, apply manually\n")
+        return True
+
     # ── Dry run stops here ────────────────────────────────────────────────────
     if mode == "dry_run":
         console.print("\n[yellow][DRY RUN] Files generated. No application submitted.[/yellow]\n")
@@ -370,7 +385,7 @@ async def process_job(
 
 
 async def run(
-    mode: str = "review",
+    mode: str = "prepare",
     dry_run_limit: int = 1,
     max_apply_override: int = None,
     platforms_filter: list[str] | None = None,
@@ -461,7 +476,9 @@ async def run(
 
     # ── Final summary ─────────────────────────────────────────────────────────
     console.rule("[bold]Session Complete[/bold]")
-    if mode not in ("search_only", "dry_run"):
+    if mode == "prepare":
+        console.print(f"Prepared: [bold green]{applied}[/bold green] jobs ready for manual apply")
+    elif mode not in ("search_only", "dry_run"):
         console.print(f"Applied: [bold green]{applied}[/bold green] jobs this session")
     show_stats(db)
 
@@ -501,21 +518,31 @@ async def run(
 
     # Final Telegram summary
     stats = db.get_stats()
-    avg_row = None
-    try:
-        import sqlite3
-        with sqlite3.connect(PATHS["database"]) as conn:
-            row = conn.execute("SELECT AVG(relevance_score) FROM jobs WHERE status='applied'").fetchone()
-            avg_row = f"{row[0]:.0f}" if row and row[0] else "—"
-    except Exception:
-        avg_row = "—"
-    await tg.notify_run_complete(
-        applied=applied,
-        found=stats.get("found", 0),
-        skipped=stats.get("skipped", 0),
-        avg_score=avg_row,
-        report_link=report_drive_link,
-    )
+    if mode == "prepare":
+        # Send daily digest: all prepared jobs pending manual apply
+        try:
+            prepared_jobs = db.get_prepared_jobs(days=7)
+            await tg.notify_daily_digest(prepared_jobs)
+            log.info("Daily digest sent: %d prepared jobs", len(prepared_jobs))
+        except Exception as e:
+            console.print(f"[dim]Digest error: {e}[/dim]")
+            log.exception("Daily digest failed")
+    else:
+        avg_row = None
+        try:
+            import sqlite3
+            with sqlite3.connect(PATHS["database"]) as conn:
+                row = conn.execute("SELECT AVG(relevance_score) FROM jobs WHERE status='applied'").fetchone()
+                avg_row = f"{row[0]:.0f}" if row and row[0] else "—"
+        except Exception:
+            avg_row = "—"
+        await tg.notify_run_complete(
+            applied=applied,
+            found=stats.get("found", 0),
+            skipped=stats.get("skipped", 0),
+            avg_score=avg_row,
+            report_link=report_drive_link,
+        )
 
 
 async def test_scraper(platform: str = "indeed", title: str = "DevOps Engineer"):
@@ -560,6 +587,61 @@ async def test_scraper(platform: str = "indeed", title: str = "DevOps Engineer")
     console.print(found.description[:400])
     console.print(f"\n[green]Scraper working correctly for {platform}.[/green]")
     log.info("test_scraper OK: %s @ %s desc_len=%d", found.title, found.company, len(found.description))
+
+
+async def test_form(url: str):
+    """
+    Test the form filler against a specific URL.
+    Opens a visible browser, navigates to the URL, and runs fill_employer_form.
+    Uses base resume as-is — no AI calls, no PDF generation. Does NOT mark anything in the DB.
+
+    Usage:
+      python main.py --test-form=https://jobs.example.com/apply/123
+    """
+    from scrapers.base_scraper import BaseScraper
+    from scrapers.employer_site import fill_employer_form
+
+    console.print(f"\n[cyan]FORM TEST[/cyan] — {url}\n")
+    log.info("test_form: url=%s", url)
+
+    resume = load_resume()
+
+    # Find any existing PDF in the output dir to reuse, or skip uploading
+    out_dir = Path(PATHS["output_dir"])
+    out_dir.mkdir(exist_ok=True)
+    existing_pdfs = sorted(out_dir.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if existing_pdfs:
+        pdf_path = str(existing_pdfs[0])
+        console.print(f"  Using existing PDF: {pdf_path}")
+    else:
+        pdf_path = None
+        console.print("  No PDF found — form filler will skip file uploads")
+
+    async with BaseScraper() as scraper:
+        page = await scraper.new_page()
+        console.print(f"  Navigating to {url} ...")
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except Exception as e:
+            console.print(f"[red]Navigation failed: {e}[/red]")
+            return
+
+        console.print("  Running form filler — watch the browser window.\n")
+        result = await fill_employer_form(
+            page=page,
+            resume_data=resume,
+            cover_letter="",
+            resume_pdf_path=pdf_path,
+            cover_letter_path=None,
+            max_steps=20,
+            non_interactive=False,
+        )
+
+    if result:
+        console.print("\n[green]✓ Form filler completed successfully![/green]")
+    else:
+        console.print("\n[yellow]Form filler returned False (did not submit).[/yellow]")
+        console.print(f"  Check the log for details: {_log_path}")
 
 
 async def do_login(platforms: list[str]):
@@ -646,6 +728,16 @@ def main():
         asyncio.run(test_scraper(platform, title))
         return
 
+    test_form_url = next((a.split("=", 1)[1] for a in args if a.startswith("--test-form=")), None)
+    if test_form_url:
+        asyncio.run(test_form(test_form_url))
+        return
+
+    if "--prepare" in args:
+        pf = _parse_platform_filter(args)
+        asyncio.run(run(mode="prepare", platforms_filter=pf))
+        return
+
     if "--dry-run" in args:
         # Run full pipeline for 1 job, generate files, DO NOT submit
         console.print("[yellow]DRY RUN MODE — will process 1 job fully, no submission.[/yellow]")
@@ -665,6 +757,10 @@ def main():
         asyncio.run(run(mode="search_only"))
         return
 
+    if "--review" in args:
+        asyncio.run(run(mode="review"))
+        return
+
     if "--auto" in args:
         # Used by scheduler — no manual review prompts
         limit = None
@@ -677,8 +773,9 @@ def main():
         asyncio.run(run(mode="auto", max_apply_override=limit))
         return
 
-    # Default: full run with review before each application
-    asyncio.run(run(mode="review"))
+    # Default: prepare mode — find jobs, generate files, send Telegram digest
+    pf = _parse_platform_filter(args)
+    asyncio.run(run(mode="prepare", platforms_filter=pf))
 
 
 if __name__ == "__main__":

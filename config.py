@@ -54,6 +54,22 @@ COMPANY_BLACKLIST: dict[str, list[str]] = {
     "Akuna Capital": [
         "Akuna Capital",
     ],
+    "Humana": [
+        "Humana",
+        "Humana Inc",
+        "Humana Health",
+        "Humana Military",
+        "Conviva Care",
+        "CenterWell",
+        "Kindred Healthcare",
+        "LifeSynch",
+    ],
+    "Brooksource": [
+        "Brooksource",
+        "Eight Eleven Group",
+        "Medasource",
+        "Genuent",
+    ],
 }
 
 
@@ -97,8 +113,16 @@ JOB_DESCRIPTION_BLACKLIST: list[str] = [
     "us citizen only",
     "us citizenship required",
     "must be a us citizen",
+    "must be a u.s. citizen",
     "united states citizen only",
+    "u.s. citizenship required",
+    "u.s. citizen only",
+    "requires us citizenship",
+    "requires u.s. citizenship",
+    "citizenship is required",
     "citizens only",
+    "only us citizens",
+    "only u.s. citizens",
     "public trust clearance",
     "dod clearance",
     "dhs clearance",
@@ -160,8 +184,8 @@ SEARCH_CONFIG = {
     # Skip companies we already applied to (cross-platform dedup)
     "skip_duplicate_companies": True,
 
-    # How many days back to look for jobs (1 = last 24 hours, matches daily schedule)
-    "posted_within_days": 1,
+    # How many days back to look for jobs (3 = last 72 hours)
+    "posted_within_days": 3,
 }
 
 PLATFORMS = {
@@ -195,8 +219,8 @@ BROWSER_CONFIG = {
 }
 
 SCHEDULER_CONFIG = {
-    # Time to run daily (24h format)
-    "run_at": "09:00",
+    # Time to run daily (24h format) — Telegram digest is sent at end of run
+    "run_at": "08:00",
     # Send email report after each run (requires SMTP config in .env)
     "email_report": False,
 }

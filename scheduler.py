@@ -63,7 +63,7 @@ def run_job_search(reason: str = "scheduled"):
     console.rule(f"[bold cyan]Job Search Run — {datetime.now().strftime('%Y-%m-%d %H:%M')} ({reason})[/bold cyan]")
 
     result = subprocess.run(
-        [sys.executable, "main.py", "--auto"],
+        [sys.executable, "main.py", "--prepare"],
         capture_output=False,
     )
 

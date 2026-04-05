@@ -39,26 +39,37 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
-                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                    platform            TEXT    NOT NULL,
-                    job_id              TEXT    NOT NULL,
-                    title               TEXT    NOT NULL,
-                    company             TEXT    NOT NULL,
-                    location            TEXT,
-                    url                 TEXT,
-                    description         TEXT,
-                    salary              TEXT    DEFAULT '',
-                    relevance_score     REAL    DEFAULT 0,
-                    relevance_reason    TEXT    DEFAULT '',
-                    status              TEXT    DEFAULT 'found',
-                    applied_at          TEXT,
-                    resume_path         TEXT,
-                    cover_letter_path   TEXT,
-                    notes               TEXT    DEFAULT '',
-                    created_at          TEXT    DEFAULT CURRENT_TIMESTAMP,
+                    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    platform                TEXT    NOT NULL,
+                    job_id                  TEXT    NOT NULL,
+                    title                   TEXT    NOT NULL,
+                    company                 TEXT    NOT NULL,
+                    location                TEXT,
+                    url                     TEXT,
+                    description             TEXT,
+                    salary                  TEXT    DEFAULT '',
+                    relevance_score         REAL    DEFAULT 0,
+                    relevance_reason        TEXT    DEFAULT '',
+                    status                  TEXT    DEFAULT 'found',
+                    applied_at              TEXT,
+                    resume_path             TEXT,
+                    cover_letter_path       TEXT,
+                    notes                   TEXT    DEFAULT '',
+                    created_at              TEXT    DEFAULT CURRENT_TIMESTAMP,
+                    resume_drive_link       TEXT    DEFAULT '',
+                    cover_letter_drive_link TEXT    DEFAULT '',
                     UNIQUE(platform, job_id)
                 )
             """)
+            # Migrate existing tables that lack drive link columns
+            for col, defn in [
+                ("resume_drive_link",       "TEXT DEFAULT ''"),
+                ("cover_letter_drive_link", "TEXT DEFAULT ''"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {defn}")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
             conn.commit()
 
     def save_job(self, job: Job) -> Job:
@@ -119,6 +130,32 @@ class Database:
                 (company,),
             ).fetchone()
             return row is not None
+
+    def save_drive_links(self, job: "Job", resume_link: str, cl_link: str) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE jobs SET resume_drive_link = ?, cover_letter_drive_link = ? "
+                "WHERE platform = ? AND job_id = ?",
+                (resume_link or "", cl_link or "", job.platform, job.job_id),
+            )
+            conn.commit()
+
+    def get_prepared_jobs(self, days: int = 7) -> list[dict]:
+        """Return jobs with status 'prepared' from the last N days, newest first."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT title, company, url, relevance_score,
+                       resume_drive_link, cover_letter_drive_link, created_at
+                FROM jobs
+                WHERE status = 'prepared'
+                  AND datetime(created_at) >= datetime('now', ?)
+                ORDER BY relevance_score DESC
+                """,
+                (f"-{days} days",),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def get_stats(self) -> dict:
         with sqlite3.connect(self.db_path) as conn:

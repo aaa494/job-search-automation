@@ -52,8 +52,8 @@ TAB_BLACKLIST    = "Blacklist"
 APP_HEADERS = [
     "Job Title", "Company", "Platform", "Score", "Status",
     "Applied Date", "Resume Link", "Cover Letter Link",
-    "Email Response", "Job URL", "Last Updated",
-    "_key",   # hidden lookup column — platform:job_id
+    "Email Response", "Job URL", "Last Updated", "Found At",
+    "_key",   # hidden lookup column — platform:job_id (column M)
 ]
 
 # ── Settings tab structure ─────────────────────────────────────────────────────
@@ -61,14 +61,14 @@ APP_HEADERS = [
 SETTINGS_ROWS = [
     ["min_relevance_score",       "70",            "Jobs below this score (0-100) are skipped"],
     ["max_applications_per_run",  "20",            "Max jobs to apply per run"],
-    ["posted_within_days",        "1",             "Search jobs posted in last N days (1 = last 24h)"],
+    ["posted_within_days",        "3",             "Search jobs posted in last N days (3 = last 72h)"],
     ["require_review",            "FALSE",         "TRUE = ask before each submission; FALSE = fully automatic"],
     ["skip_duplicate_companies",  "TRUE",          "Skip companies already applied to"],
     ["remote_only",               "TRUE",          "Remote positions only"],
     ["location",                  "United States", "Location to search"],
     ["job_titles",                "DevOps Engineer, Platform Engineer, Cloud Engineer, Infrastructure Engineer, Site Reliability Engineer, SRE, Terraform Engineer, Automation Engineer",
                                                    "Comma-separated list of job titles to search"],
-    ["run_at",                    "09:00",         "Daily run time in HH:MM (24h local time)"],
+    ["run_at",                    "08:00",         "Daily run time in HH:MM (24h local time) — Telegram digest sent at end of run"],
     ["headless",                  "FALSE",         "TRUE = headless browser (no window); FALSE = visible (default)"],
     ["linkedin_enabled",          "TRUE",          "Search LinkedIn"],
     ["linkedin_max_jobs",         "30",            "Max LinkedIn jobs per run"],
@@ -241,8 +241,8 @@ def _init_applications_tab(service, sid: str):
     sheet_id = _get_sheet_id(service, sid, TAB_APPLICATIONS)
     if sheet_id is not None:
         _bold_freeze_header(service, sid, sheet_id)
-    # Hide the _key column (column L = index 11)
-    _hide_column(service, sid, sheet_id, 11)
+    # Hide the _key column (column M = index 12)
+    _hide_column(service, sid, sheet_id, 12)
 
 
 def _init_settings_tab(service, sid: str):
@@ -442,7 +442,7 @@ def apply_sheets_config() -> None:
 def _find_row_by_key(service, sid: str, platform: str, job_id: str) -> int | None:
     """Returns the 1-based row index of an existing job entry, or None."""
     key_result = service.spreadsheets().values().get(
-        spreadsheetId=sid, range=f"{TAB_APPLICATIONS}!L:L"
+        spreadsheetId=sid, range=f"{TAB_APPLICATIONS}!M:M"
     ).execute()
     key_rows = key_result.get("values", [])
     target = f"{platform}:{job_id}"
@@ -476,15 +476,15 @@ def sync_all_jobs(db_path: str = "jobs.db") -> None:
             rows = conn.execute("""
                 SELECT platform, job_id, title, company, relevance_score,
                        status, applied_at, resume_path, cover_letter_path,
-                       url, notes
+                       url, notes, created_at
                 FROM jobs
-                WHERE status IN ('applied', 'reviewing', 'skipped', 'rejected', 'error', 'found')
+                WHERE status IN ('applied', 'reviewing', 'skipped', 'rejected', 'error', 'found', 'prepared')
                 ORDER BY applied_at DESC NULLS LAST
             """).fetchall()
 
-        # Get existing keys
+        # Get existing keys (column M now that Found At is column L)
         key_result = service.spreadsheets().values().get(
-            spreadsheetId=sid, range=f"{TAB_APPLICATIONS}!L:L"
+            spreadsheetId=sid, range=f"{TAB_APPLICATIONS}!M:M"
         ).execute()
         key_rows = key_result.get("values", [])
         existing_keys = {row[0]: idx + 1 for idx, row in enumerate(key_rows) if row}
@@ -497,32 +497,34 @@ def sync_all_jobs(db_path: str = "jobs.db") -> None:
             key = f"{job['platform']}:{job['job_id']}"
             score = f"{job['relevance_score']:.0f}" if job['relevance_score'] else ""
             applied = (job['applied_at'] or "")[:16]
+            found_at = (job['created_at'] or "")[:16]
 
             row_data = [
-                job['title'] or "",
-                job['company'] or "",
-                job['platform'] or "",
-                score,
-                job['status'] or "",
-                applied,
-                "",   # Resume Link — filled by update_job_links
-                "",   # Cover Letter Link — filled by update_job_links
-                job['notes'] or "",   # Email Response / notes
-                job['url'] or "",
-                now,
-                key,  # _key column (hidden)
+                job['title'] or "",           # A - Job Title
+                job['company'] or "",         # B - Company
+                job['platform'] or "",        # C - Platform
+                score,                        # D - Score
+                job['status'] or "",          # E - Status
+                applied,                      # F - Applied Date
+                "",                           # G - Resume Link (filled by update_job_links)
+                "",                           # H - Cover Letter Link (filled by update_job_links)
+                job['notes'] or "",           # I - Email Response / notes
+                job['url'] or "",             # J - Job URL
+                now,                          # K - Last Updated
+                found_at,                     # L - Found At
+                key,                          # M - _key (hidden)
             ]
 
             if key in existing_keys:
                 row_num = existing_keys[key]
-                # Update A-F (title→applied_date) and I-L (notes→_key).
+                # Update A-F (title→applied_date) and I-M (notes→_key).
                 # Skip G-H (Resume Link / Cover Letter Link) — written by update_job_links().
                 updates.append({
                     "range": f"{TAB_APPLICATIONS}!A{row_num}:F{row_num}",
                     "values": [row_data[:6]],
                 })
                 updates.append({
-                    "range": f"{TAB_APPLICATIONS}!I{row_num}:L{row_num}",
+                    "range": f"{TAB_APPLICATIONS}!I{row_num}:M{row_num}",
                     "values": [row_data[8:]],
                 })
             else:

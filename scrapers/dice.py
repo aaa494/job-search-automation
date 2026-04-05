@@ -12,6 +12,7 @@ log = logging.getLogger("jobsearch")
 
 from playwright.async_api import Page
 
+from config import SEARCH_CONFIG
 from database import Job
 from scrapers.base_scraper import BaseScraper
 
@@ -23,6 +24,8 @@ class DiceScraper(BaseScraper):
     async def search_jobs(self, query: str, max_results: int) -> AsyncIterator[Job]:
         page = await self.new_page()
 
+        _days = SEARCH_CONFIG.get("posted_within_days", 3)
+        _dice_date = "THREE_DAYS" if _days <= 3 else "ONE_WEEK" if _days <= 7 else "ONE_MONTH"
         search_url = (
             f"{self.BASE}/jobs"
             f"?q={query.replace(' ', '+')}"
@@ -32,7 +35,7 @@ class DiceScraper(BaseScraper):
             f"&page=1"
             f"&pageSize=20"
             f"&filters.workplaceTypes=Remote"
-            f"&filters.postedDate=ONE_WEEK"
+            f"&filters.postedDate={_dice_date}"
             f"&language=en"
         )
         await page.goto(search_url, wait_until="domcontentloaded")

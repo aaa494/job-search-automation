@@ -16,7 +16,7 @@ from typing import AsyncIterator
 import anthropic
 from playwright.async_api import Page, TimeoutError as PWTimeout
 
-from config import AI_CONFIG
+from config import AI_CONFIG, SEARCH_CONFIG
 from database import Job
 from scrapers.base_scraper import BaseScraper
 
@@ -68,15 +68,17 @@ class LinkedInScraper(BaseScraper):
 
         page = await self.new_page()
         try:
-            # Build search URL: remote, full-time, last 7 days
+            # Build search URL: remote, full-time, posted within configured days
+            _days = SEARCH_CONFIG.get("posted_within_days", 3)
+            _seconds = _days * 24 * 60 * 60
             search_url = (
                 f"{self.BASE}/jobs/search/"
                 f"?keywords={query.replace(' ', '+')}"
                 f"&location=United+States"
-                f"&f_WT=2"         # remote
-                f"&f_JT=F"         # full-time
-                f"&f_TPR=r604800"  # posted within 7 days
-                f"&sortBy=R"       # most recent
+                f"&f_WT=2"               # remote
+                f"&f_JT=F"               # full-time
+                f"&f_TPR=r{_seconds}"    # posted within N days
+                f"&sortBy=R"             # most recent
             )
             await page.goto(search_url, wait_until="domcontentloaded")
             await self.human_delay(2000, 3000)
@@ -540,34 +542,62 @@ class LinkedInScraper(BaseScraper):
 
     # ── standard answers for common Easy Apply questions ─────────────────────
     _FIELD_ANSWERS = {
+        # Name
         "first":           "Aidarbek",
         "last":            "Abdyk",
+        "preferred name":  "Aidarbek Abdyk",
+        "full name":       "Aidarbek Abdyk",
+        # Contact
         "phone":           "773-757-2279",
+        "email":           "aidarbek.a@yahoo.com",
+        # Location
         "city":            "Chicago",
-        "location":        "Chicago, IL",
+        "location":        "Chicago, IL, USA",
+        "based in":        "Chicago, IL, USA",
         "country":         "United States",
         "state":           "Illinois",
         "zip":             "60601",
+        "postal":          "60601",
+        "address":         "Chicago, IL",
+        # Compensation
         "salary":          "130000",
         "compensation":    "130000",
         "expected":        "130000",
-        "linkedin":        "https://linkedin.com/in/aidarbek",
+        "desired":         "130000",
+        # Profiles
+        "linkedin":        "https://www.linkedin.com/in/aidarbek-devops/",
         "github":          "",
-        "website":         "",
+        "website":         "https://www.linkedin.com/in/aidarbek-devops/",
+        "portfolio":       "https://www.linkedin.com/in/aidarbek-devops/",
+        # Availability
         "notice":          "2 weeks",
         "availability":    "2 weeks",
+        "start":           "2 weeks",
+        # Experience
         "experience":      "7",
         "years":           "7",
+        # Work authorization
         "authorized":      "Yes",
         "sponsorship":     "No",
         "visa":            "No",
+        "work auth":       "Yes",
+        # Work style
         "remote":          "Yes",
         "relocate":        "No",
         "relocation":      "No",
-        "gender":          "Prefer not to say",
-        "ethnicity":       "Prefer not to say",
+        # EEO / diversity
+        "gender":          "Male",
+        "hispanic":        "No",
+        "latino":          "No",
+        "ethnicity":       "Asian",
+        "race":            "Asian",
         "veteran":         "No",
         "disability":      "No",
+        # Common yes/no
+        "referred":        "No",
+        "previously employed": "No",
+        "worked here":     "No",
+        "former employee": "No",
     }
 
     def _quick_answer(self, label: str) -> str:
@@ -601,7 +631,7 @@ class LinkedInScraper(BaseScraper):
                 except Exception:
                     pass
 
-            # ── 2. Fill text / tel / email inputs that are empty ──────────────
+            # ── 2. Fill text / tel / email inputs ────────────────────────────
             for sel in ["input[type='text']", "input[type='tel']", "input[type='email']",
                         "input[type='number']"]:
                 inputs = await page.query_selector_all(
@@ -610,6 +640,11 @@ class LinkedInScraper(BaseScraper):
                 for inp in inputs:
                     try:
                         val = (await inp.get_attribute("value") or "").strip()
+                        # Always overwrite email fields with the correct address
+                        if sel == "input[type='email']" or "email" in (await inp.get_attribute("name") or "").lower() or "email" in (await inp.get_attribute("placeholder") or "").lower():
+                            await inp.fill("aidarbek.a@yahoo.com")
+                            await self.human_delay(150, 300)
+                            continue
                         if val:
                             continue
                         label = await self._field_label(page, inp)

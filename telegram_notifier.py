@@ -106,3 +106,47 @@ async def notify_error(context: str, error: str) -> None:
         f"❌ <b>Error</b> in {context}\n"
         f"<code>{error[:300]}</code>"
     )
+
+
+async def notify_daily_digest(jobs: list[dict]) -> None:
+    """
+    Send the morning digest: all prepared jobs waiting for manual apply.
+    Each job dict: title, company, url, relevance_score, resume_drive_link,
+                   cover_letter_drive_link, created_at.
+    """
+    if not jobs:
+        await send(
+            f"☀️ <b>Morning digest — {datetime.now().strftime('%Y-%m-%d')}</b>\n"
+            "No new jobs ready for manual apply today."
+        )
+        return
+
+    lines = [f"☀️ <b>Morning digest — {datetime.now().strftime('%Y-%m-%d')}</b>\n"
+             f"{len(jobs)} job(s) ready for you to apply:\n"]
+
+    for i, job in enumerate(jobs, 1):
+        score = f"{job['relevance_score']:.0f}" if job.get("relevance_score") else "—"
+        line = f"<b>{i}. {job['title']}</b> @ {job['company']}  [{score}/100]\n"
+        if job.get("url"):
+            line += f"   🔗 <a href=\"{job['url']}\">Job posting</a>\n"
+        if job.get("resume_drive_link"):
+            line += f"   📄 <a href=\"{job['resume_drive_link']}\">Resume (Drive)</a>\n"
+        if job.get("cover_letter_drive_link"):
+            line += f"   ✉️ <a href=\"{job['cover_letter_drive_link']}\">Cover letter</a>\n"
+        lines.append(line)
+
+    # Telegram message limit is 4096 chars — split if needed
+    full_msg = "\n".join(lines)
+    if len(full_msg) <= 4096:
+        await send(full_msg)
+    else:
+        # Send header + first chunk, then remaining jobs
+        await send(lines[0])
+        chunk: list[str] = []
+        for line in lines[1:]:
+            chunk.append(line)
+            if sum(len(l) for l in chunk) > 3500:
+                await send("\n".join(chunk))
+                chunk = []
+        if chunk:
+            await send("\n".join(chunk))
