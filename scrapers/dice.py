@@ -4,8 +4,6 @@ Dice.com scraper (great for DevOps/cloud roles in the US).
 
 import logging
 import re
-import asyncio
-import json
 from typing import AsyncIterator
 
 log = logging.getLogger("jobsearch")
@@ -184,52 +182,3 @@ class DiceScraper(BaseScraper):
         except Exception:
             return default
 
-    async def apply(self, job: Job, resume_pdf_path: str, cover_letter_text: str,
-                    resume_data: dict | None = None, non_interactive: bool = False,
-                    cover_letter_path: str | None = None) -> bool:
-        """Dice redirects to external apply URLs — follow link then use Claude Vision form filler."""
-        from scrapers.employer_site import fill_employer_form
-        if not resume_data:
-            return False
-        page = await self.new_page()
-        try:
-            await page.goto(job.url, wait_until="domcontentloaded")
-            await self.human_delay(2000, 3000)
-
-            apply_btn = await page.query_selector(
-                "a[data-cy='apply-button'], button[data-cy='apply-button'], "
-                "a.btn-apply, button:has-text('Apply Now')"
-            )
-            if apply_btn:
-                href = await apply_btn.get_attribute("href")
-                if href and href.startswith("http"):
-                    await page.goto(href, wait_until="domcontentloaded")
-                    await self.human_delay(2000, 3000)
-                else:
-                    # Listen for popup
-                    popup_future: asyncio.Future = asyncio.get_event_loop().create_future()
-                    def _on_popup(p):
-                        if not popup_future.done():
-                            popup_future.set_result(p)
-                    page.context.on("page", _on_popup)
-                    await apply_btn.click()
-                    await self.human_delay(2500, 3500)
-                    page.context.remove_listener("page", _on_popup)
-                    if popup_future.done():
-                        page = popup_future.result()
-                        await page.wait_for_load_state("domcontentloaded")
-
-            return await fill_employer_form(
-                page, resume_data, cover_letter_text, resume_pdf_path,
-                cover_letter_path=cover_letter_path,
-                non_interactive=non_interactive,
-            )
-
-        except Exception as e:
-            log.warning("[Dice] Apply error for %s: %s", job.url, e)
-            return False
-        finally:
-            try:
-                await page.close()
-            except Exception:
-                pass

@@ -34,7 +34,7 @@ from config import (
     SEARCH_CONFIG,
 )
 
-PORT = 5050
+PORT = int(os.getenv("DASHBOARD_PORT", "5050"))
 USER_CONFIG_FILE = Path("user_config.json")
 
 

@@ -186,6 +186,9 @@ SEARCH_CONFIG = {
 
     # How many days back to look for jobs (3 = last 72 hours)
     "posted_within_days": 3,
+
+    # How many days of prepared jobs to include in the morning Telegram digest
+    "digest_lookback_days": 7,
 }
 
 PLATFORMS = {

@@ -69,6 +69,7 @@ SETTINGS_ROWS = [
     ["job_titles",                "DevOps Engineer, Platform Engineer, Cloud Engineer, Infrastructure Engineer, Site Reliability Engineer, SRE, Terraform Engineer, Automation Engineer",
                                                    "Comma-separated list of job titles to search"],
     ["run_at",                    "08:00",         "Daily run time in HH:MM (24h local time) — Telegram digest sent at end of run"],
+    ["digest_lookback_days",      "7",             "Days of prepared jobs to include in the morning Telegram digest"],
     ["headless",                  "FALSE",         "TRUE = headless browser (no window); FALSE = visible (default)"],
     ["linkedin_enabled",          "TRUE",          "Search LinkedIn"],
     ["linkedin_max_jobs",         "30",            "Max LinkedIn jobs per run"],
@@ -348,6 +349,8 @@ def read_settings_from_sheet(service, sid: str) -> dict:
         cfg["search"]["location"] = raw["location"]
     if "job_titles" in raw:
         cfg["search"]["job_titles"] = [t.strip() for t in raw["job_titles"].split(",") if t.strip()]
+    if "digest_lookback_days" in raw:
+        cfg["search"]["digest_lookback_days"] = int(raw["digest_lookback_days"])
 
     # Platforms
     for p in ["linkedin", "indeed", "weworkremotely", "dice"]:

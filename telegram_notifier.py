@@ -101,6 +101,20 @@ async def notify_run_complete(applied: int, found: int, skipped: int, avg_score:
     await send(msg)
 
 
+async def notify_login_required(platform: str) -> None:
+    """Sent when a scraper hits a login wall (session expired / cookies stale)."""
+    await send(
+        f"🔐 <b>{platform.capitalize()} session expired</b>\n"
+        f"Browser was redirected to the login page — cookies need refresh.\n\n"
+        f"<b>Fix (run on your Mac):</b>\n"
+        f"<code>python main.py --login</code>\n"
+        f"Log in to {platform.capitalize()} in the browser window, press ENTER.\n\n"
+        f"Then copy the updated cookie to the server:\n"
+        f"<code>scp cookies/{platform}.json user@server:/path/to/app/cookies/</code>\n\n"
+        f"Skipping {platform.capitalize()} for this run."
+    )
+
+
 async def notify_error(context: str, error: str) -> None:
     await send(
         f"❌ <b>Error</b> in {context}\n"
