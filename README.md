@@ -25,7 +25,7 @@ You get a Telegram message every morning listing what's ready to apply to with d
 
 ## Requirements
 
-- **Python 3.10+**
+- **Python 3.10+** (3.12 recommended)
 - **Anthropic API key** — [console.anthropic.com](https://console.anthropic.com)
 - Works on **Mac** (visible browser) and **Ubuntu server** (headless)
 
@@ -35,6 +35,14 @@ You get a Telegram message every morning listing what's ready to apply to with d
 
 ### Step 1 — Clone and install
 
+**On Ubuntu server — install system dependencies first:**
+```bash
+sudo apt update && sudo apt install -y python3 python3-venv python3-pip python3.12-venv
+```
+
+> If `python3.12-venv` fails (older Ubuntu), try `python3-venv` instead.
+
+**Then on any OS:**
 ```bash
 git clone https://github.com/aaa494/job-search-automation.git
 cd job-search-automation
@@ -65,6 +73,8 @@ Edit with your real name, contact info, skills, experience, education, certifica
 
 ### Step 4 — Log in to LinkedIn and Indeed (saves cookies)
 
+> **This step requires a Mac or desktop with a display.** The browser must be visible for Google login. You cannot run `--login` on a headless server.
+
 ```bash
 source .venv/bin/activate
 python main.py --login
@@ -73,16 +83,49 @@ python main.py --login
 A browser window opens. Click **Sign in with Google**, log in, press ENTER.
 Cookies are saved to `cookies/`. You only need to do this once (LinkedIn ~1 year, Indeed ~30 days).
 
-### Step 5 — Test it
+**If running on a server:** run `--login` on your Mac first, then copy cookies:
+```bash
+scp cookies/linkedin.json cookies/indeed.json user@yourserver:/path/to/app/cookies/
+```
+
+### Step 5 — Set up Google Drive / Sheets (optional but recommended)
+
+See the [Google Drive section](#optional-google-drive) below. After placing `credentials/google_credentials.json`, authorize both tokens:
 
 ```bash
+source .venv/bin/activate
+python auth_google_drive.py   # authorizes Drive → saves credentials/token.json
+python main.py --dry-run      # authorizes Sheets on first run → saves credentials/sheets_token.json
+```
+
+> **If you already have an existing "Job Applications" Google Sheet:** save its ID to `credentials/sheets_id.txt` to prevent the script from creating a new one:
+> ```bash
+> # Get the ID from the sheet URL: /spreadsheets/d/<ID>/edit
+> echo "your-sheet-id-here" > credentials/sheets_id.txt
+> ```
+
+### Step 6 — Enable headless mode (server only)
+
+On a server there is no display, so the browser must run headlessly. Set this in `user_config.json`:
+```bash
+echo '{"browser": {"headless": true}}' > user_config.json
+```
+
+Or set it in the **Settings tab** of your Google Sheet: `headless = TRUE`.
+
+> Note: Google Sheets settings override `user_config.json`. If your sheet has `headless = FALSE`, the server run will fail. Make sure it says `TRUE`.
+
+### Step 7 — Test it
+
+```bash
+source .venv/bin/activate
 python main.py --dry-run
 ```
 
 Finds 1 job, scores it, adapts your resume, generates a PDF + cover letter.
 No DB write, no Drive upload. Check `output/` to see the generated files.
 
-### Step 6 — Run the scheduler
+### Step 8 — Run the scheduler
 
 ```bash
 python scheduler.py
@@ -140,7 +183,7 @@ When `GOOGLE_SHEETS_ENABLED=true` in `.env`, the script creates and maintains **
 | `linkedin_enabled` | TRUE | Search LinkedIn |
 | `linkedin_max_jobs` | 30 | Max LinkedIn jobs per run |
 | *(same for indeed, dice, weworkremotely)* | | |
-| `headless` | FALSE | TRUE for server (no display) |
+| `headless` | FALSE | **Must be TRUE on servers** (no display); FALSE = visible browser (Mac only) |
 
 Config priority (highest → lowest): **Google Sheets → user_config.json → config.py defaults**
 
@@ -169,13 +212,8 @@ Or set `DASHBOARD_PORT=5050` in `.env` to make the port persistent.
 ### Install
 
 ```bash
-# System dependencies
-sudo apt update && sudo apt install -y python3 python3-venv python3-pip
-
-# Playwright browser deps
-sudo npx playwright install-deps chromium   # or:
-sudo apt install -y libgbm-dev libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
-    libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0 libcairo2 libasound2
+# System dependencies (including python3.12-venv — required on Ubuntu 22/24)
+sudo apt update && sudo apt install -y python3 python3-pip python3.12-venv
 
 # Clone and set up
 git clone https://github.com/aaa494/job-search-automation.git
@@ -183,29 +221,39 @@ cd job-search-automation
 bash setup.sh
 ```
 
+`setup.sh` automatically installs Playwright and Chromium. If it fails on Playwright deps:
+```bash
+sudo .venv/bin/playwright install-deps chromium
+```
+
 ### Enable headless mode
 
-In `.env`:
-```
-BROWSER_CONFIG_HEADLESS=true
+On a server there is no display. You must enable headless mode — pick one:
+
+**Option A — `user_config.json` (simplest):**
+```bash
+echo '{"browser": {"headless": true}}' > user_config.json
 ```
 
-Or in the Settings tab in Google Sheets: `headless = TRUE`
+**Option B — Google Sheets Settings tab:**
+Set `headless = TRUE` in your sheet's Settings tab.
 
-Or in `user_config.json`:
-```json
-{"browser": {"headless": true}}
-```
+> Do not add `BROWSER_CONFIG_HEADLESS` to `.env` — that variable is not read by the code.
 
 ### Copy cookies from Mac
 
 ```bash
-# After running --login on your Mac:
+# Run --login on your Mac first (requires visible browser):
+source .venv/bin/activate && python main.py --login
+
+# Then copy to server:
 scp cookies/linkedin.json user@yourserver:/path/to/app/cookies/
 scp cookies/indeed.json   user@yourserver:/path/to/app/cookies/
 ```
 
 ### Run as a systemd service
+
+Replace `/path/to/app` and `youruser` with your actual path and user (e.g. `/root/job-search-aidar` and `root`).
 
 ```bash
 sudo nano /etc/systemd/system/jobsearch.service
@@ -219,8 +267,8 @@ After=network.target
 [Service]
 Type=simple
 User=youruser
-WorkingDirectory=/home/youruser/job-search-automation
-ExecStart=/home/youruser/job-search-automation/.venv/bin/python scheduler.py
+WorkingDirectory=/path/to/app
+ExecStart=/path/to/app/.venv/bin/python scheduler.py
 Restart=on-failure
 RestartSec=60
 
@@ -239,6 +287,8 @@ journalctl -u jobsearch -f
 # Or:
 tail -f logs/scheduler.log
 ```
+
+> Before enabling the service, make sure `--dry-run` works and headless mode is set (see above). The scheduler runs `main.py --prepare` daily at the time set in your Google Sheet (`run_at` key, default `09:00`).
 
 ### When cookies expire (Telegram will notify you)
 
@@ -335,7 +385,16 @@ sudo systemctl start  jobsearch-alice jobsearch-bob
    GOOGLE_DRIVE_ENABLED=true
    GOOGLE_SHEETS_ENABLED=true
    ```
-6. `python auth_google_drive.py` — one-time browser authorization
+6. Authorize (two separate tokens, both one-time only):
+   ```bash
+   source .venv/bin/activate
+   python auth_google_drive.py   # → saves credentials/token.json
+   python main.py --dry-run      # → saves credentials/sheets_token.json on first run
+   ```
+
+> The script uses **two separate OAuth tokens**: `credentials/token.json` (Drive) and `credentials/sheets_token.json` (Sheets). Both must be authorized before the full pipeline runs unattended.
+
+> **Existing spreadsheet:** If you already have a "Job Applications" sheet, paste its ID (from the URL) into `credentials/sheets_id.txt` — otherwise the script creates a new one and reads settings from there instead of yours.
 
 Drive folder structure:
 ```
@@ -427,20 +486,43 @@ Banned words: *leveraged, spearheaded, orchestrated, synergies, cutting-edge, in
 
 ## Troubleshooting
 
+**`setup.sh` fails: `ensurepip is not available`**  
+→ `sudo apt install python3.12-venv` then re-run `bash setup.sh`
+
 **`ANTHROPIC_API_KEY not set`**  
 → Open `.env` and add your key
 
+**Server: `Looks like you launched a headed browser without having a XServer`**  
+→ Headless mode is not enabled. Set it in `user_config.json`:
+```bash
+echo '{"browser": {"headless": true}}' > user_config.json
+```
+→ Or set `headless = TRUE` in your Google Sheet's Settings tab. Note: Google Sheets overrides `user_config.json`, so check the sheet if the problem persists.
+
+**Script creates a new Google Sheet instead of using your existing one**  
+→ Save the existing sheet's ID to `credentials/sheets_id.txt`:
+```bash
+echo "your-sheet-id-here" > credentials/sheets_id.txt
+```
+Get the ID from the URL: `docs.google.com/spreadsheets/d/<ID>/edit`
+
+**Google Drive: `EOF when reading a line` / authorization loop**  
+→ Run `python auth_google_drive.py` interactively (not in background) to complete OAuth and save `credentials/token.json`
+
 **🔐 LinkedIn/Indeed session expired (Telegram message)**  
-→ `python main.py --login` on your Mac, then copy `cookies/linkedin.json` to the server
+→ `python main.py --login` on your Mac (needs a display), then copy cookies to server:
+```bash
+scp cookies/linkedin.json cookies/indeed.json user@server:/path/to/app/cookies/
+```
 
 **PDF not generated**  
-→ `playwright install chromium`
+→ `source .venv/bin/activate && playwright install chromium`
 
-**On server: `playwright install-deps` fails**  
-→ `sudo playwright install-deps chromium` or manually install the listed apt packages
+**On server: Playwright deps missing**  
+→ `sudo .venv/bin/playwright install-deps chromium`
 
-**Google Drive: credentials not found**  
-→ File must be at `credentials/google_credentials.json`
+**Google Drive / Sheets: `credentials/google_credentials.json not found`**  
+→ Download OAuth 2.0 Desktop JSON from Google Cloud Console and save to that path
 
 **Telegram: no messages received**  
 → Send at least one message to your bot first; check token and chat ID in `.env`
