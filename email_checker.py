@@ -35,8 +35,8 @@ from google_sheets import update_email_response, is_enabled as sheets_enabled
 
 log = logging.getLogger("jobsearch")
 
-IMAP_HOST = "imap.mail.yahoo.com"
-IMAP_PORT = 993
+IMAP_HOST = os.getenv("EMAIL_IMAP_HOST", "imap.mail.yahoo.com")
+IMAP_PORT = int(os.getenv("EMAIL_IMAP_PORT", "993"))
 
 # How far back to check (days)
 LOOKBACK_DAYS = 30

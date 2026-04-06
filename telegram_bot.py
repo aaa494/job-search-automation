@@ -36,6 +36,7 @@ DB_PATH = "jobs.db"
 # Commands shown in Telegram's / dropdown
 COMMANDS = [
     ("helpjob", "List all commands"),
+    ("applied", "Mark a job as applied — /applied CompanyName"),
     ("test",    "Find 1 real job and apply now (test mode)"),
     ("run",     "Start full job search for today"),
     ("stop",    "Stop the current run"),
@@ -86,6 +87,87 @@ def register_commands() -> None:
 
 
 # ── Command handlers ────────────────────────────────────────────────────────
+
+def handle_applied(args: str) -> str:
+    """
+    Mark a prepared job as applied.
+    Usage: /applied CompanyName
+    Searches prepared jobs for a company name match (case-insensitive, partial).
+    Updates DB status → 'applied' and syncs to Google Sheets.
+    """
+    company_query = args.strip()
+    if not company_query:
+        return (
+            "Usage: <code>/applied CompanyName</code>\n"
+            "Example: <code>/applied DraftKings</code>\n\n"
+            "This marks the job as applied in the database and Google Sheets."
+        )
+
+    if not Path(DB_PATH).exists():
+        return "No database found yet."
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT platform, job_id, title, company, url
+                FROM jobs
+                WHERE status = 'prepared'
+                  AND LOWER(company) LIKE ?
+                ORDER BY created_at DESC
+            """, (f"%{company_query.lower()}%",)).fetchall()
+
+        if not rows:
+            # Show recent prepared jobs to help user
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                recent = conn.execute("""
+                    SELECT company, title FROM jobs
+                    WHERE status = 'prepared'
+                    ORDER BY created_at DESC LIMIT 10
+                """).fetchall()
+            if recent:
+                names = "\n".join(f"• {r['company']} — {r['title']}" for r in recent)
+                return f"No prepared job found matching <b>{company_query}</b>.\n\nPrepared jobs:\n{names}"
+            return f"No prepared jobs found matching <b>{company_query}</b>."
+
+        if len(rows) > 1:
+            names = "\n".join(f"• {r['company']} — {r['title']}" for r in rows)
+            return (
+                f"Found {len(rows)} matches for <b>{company_query}</b>. Be more specific:\n{names}"
+            )
+
+        job = rows[0]
+        applied_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                UPDATE jobs SET status = 'applied', applied_at = ?
+                WHERE platform = ? AND job_id = ?
+            """, (applied_at, job["platform"], job["job_id"]))
+            conn.commit()
+
+        # Sync to Google Sheets if enabled
+        sheets_msg = ""
+        try:
+            from google_sheets import update_job_status, is_enabled as sheets_enabled
+            if sheets_enabled():
+                update_job_status(job["platform"], job["job_id"], "applied", applied_at)
+                sheets_msg = "\n✅ Google Sheets updated."
+        except Exception as e:
+            sheets_msg = f"\n⚠️ Sheets sync failed: {e}"
+
+        return (
+            f"✅ Marked as <b>applied</b>:\n"
+            f"<b>{job['title']}</b> @ {job['company']}\n"
+            f"Applied: {applied_at[:10]}"
+            f"{sheets_msg}\n\n"
+            f"<a href=\"{job['url']}\">Job posting</a>"
+        )
+
+    except Exception as e:
+        return f"Error: {e}"
+
 
 def handle_helpjob() -> str:
     lines = ["<b>Available commands:</b>\n"]
@@ -233,26 +315,31 @@ def handle_status() -> str:
 # ── Dispatch ────────────────────────────────────────────────────────────────
 
 HANDLERS = {
-    "/helpjob": handle_helpjob,
-    "/start":   handle_helpjob,
-    "/help":    handle_helpjob,
-    "/test":    handle_test,
-    "/run":     handle_run,
-    "/stop":    handle_stop,
-    "/stats":   handle_stats,
-    "/report":  handle_report,
-    "/status":  handle_status,
+    "/helpjob": (handle_helpjob, False),
+    "/start":   (handle_helpjob, False),
+    "/help":    (handle_helpjob, False),
+    "/applied": (handle_applied, True),   # True = passes remaining text as args
+    "/test":    (handle_test,    False),
+    "/run":     (handle_run,     False),
+    "/stop":    (handle_stop,    False),
+    "/stats":   (handle_stats,   False),
+    "/report":  (handle_report,  False),
+    "/status":  (handle_status,  False),
 }
 
 
 def dispatch(text: str) -> str:
     text = text.strip()
     # Strip bot username suffix (e.g. /stats@MyJobBot → /stats)
-    cmd = text.split("@")[0].split(" ")[0].lower()
-    handler = HANDLERS.get(cmd)
-    if handler:
-        return handler()
-    return f"Unknown command: {cmd}\nType /helpjob to see available commands."
+    parts = text.split(" ", 1)
+    cmd = parts[0].split("@")[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+
+    entry = HANDLERS.get(cmd)
+    if not entry:
+        return f"Unknown command: {cmd}\nType /helpjob to see available commands."
+    handler, takes_args = entry
+    return handler(args) if takes_args else handler()
 
 
 # ── Main polling loop ───────────────────────────────────────────────────────

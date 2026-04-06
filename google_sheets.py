@@ -641,6 +641,33 @@ def update_email_response(platform: str, job_id: str, response_summary: str) -> 
         print(f"[Sheets] update_email_response error: {e}")
 
 
+def update_job_status(platform: str, job_id: str, status: str, applied_at: str = "") -> None:
+    """Update Status (E) and Applied Date (F) columns for a job — used by Telegram /applied command."""
+    if not is_enabled():
+        return
+    service, drive_svc = _authenticate()
+    if not service:
+        return
+    try:
+        sid = _get_or_create_spreadsheet(service, drive_svc)
+        row_num = _find_row_by_key(service, sid, platform, job_id)
+        if not row_num:
+            return
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        applied_date = applied_at[:10] if applied_at else now[:10]
+        service.spreadsheets().values().batchUpdate(
+            spreadsheetId=sid,
+            body={"valueInputOption": "RAW", "data": [
+                {"range": f"{TAB_APPLICATIONS}!E{row_num}", "values": [[status]]},
+                {"range": f"{TAB_APPLICATIONS}!F{row_num}", "values": [[applied_date]]},
+                {"range": f"{TAB_APPLICATIONS}!K{row_num}", "values": [[now]]},
+            ]},
+        ).execute()
+        print(f"[Sheets] Status updated to '{status}' for row {row_num}")
+    except Exception as e:
+        print(f"[Sheets] update_job_status error: {e}")
+
+
 def get_sheet_url() -> str | None:
     """Returns the URL of the spreadsheet, or None if not created yet."""
     id_file = CREDS_DIR / "sheets_id.txt"

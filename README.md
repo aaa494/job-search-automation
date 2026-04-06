@@ -251,6 +251,27 @@ scp cookies/linkedin.json user@yourserver:/path/to/app/cookies/
 scp cookies/indeed.json   user@yourserver:/path/to/app/cookies/
 ```
 
+### Pre-flight check (run this before enabling the service)
+
+Run these commands once on the server to confirm everything works end-to-end:
+
+```bash
+cd /path/to/app
+source .venv/bin/activate
+
+# 1. Verify headless mode + scraping + AI + Drive + Sheets all work together:
+python main.py --dry-run
+```
+
+A successful dry-run will:
+- Scrape 1 job from any platform
+- Score it with Claude
+- Generate a PDF resume and cover letter in `output/`
+- Upload files to Google Drive
+- Sync to Google Sheets
+
+If any step fails, fix it before enabling the service. Common fixes are in the [Troubleshooting](#troubleshooting) section.
+
 ### Run as a systemd service
 
 Replace `/path/to/app` and `youruser` with your actual path and user (e.g. `/root/job-search-aidar` and `root`).
@@ -353,7 +374,7 @@ sudo systemctl start  jobsearch-alice jobsearch-bob
 
 ---
 
-## Optional: Telegram Notifications
+## Optional: Telegram Notifications + Bot Commands
 
 **Setup (2 minutes):**
 1. Telegram → **@BotFather** → `/newbot`
@@ -366,10 +387,73 @@ sudo systemctl start  jobsearch-alice jobsearch-bob
    TELEGRAM_CHAT_ID=123456789
    ```
 
-**What you receive:**
+**What you receive automatically:**
 - 🚀 Run started
 - ☀️ Morning digest — list of prepared jobs with links
+- 🎉 Positive email response (interview invite, follow-up)
 - 🔐 Session expired — cookie refresh instructions
+
+**Bot commands** (run `python telegram_bot.py` alongside the scheduler):
+
+| Command | What it does |
+|---------|-------------|
+| `/applied DraftKings` | Marks the job as applied → updates DB + Google Sheets (status + date) |
+| `/stats` | Application statistics |
+| `/run` | Start a job search now |
+| `/stop` | Stop in-progress run |
+| `/status` | Is the scheduler running? |
+| `/helpjob` | Full command list |
+
+The `/applied` command is the key one — after you manually submit an application, send `/applied CompanyName` to the bot. It will update the status in both the database and Google Sheets, which also enables email response matching for that job.
+
+---
+
+## Optional: Email Response Checking
+
+Checks your inbox after every run. Uses Claude to classify each reply and updates Google Sheets automatically.
+
+| Response type | What happens |
+|--------------|-------------|
+| Interview invite / follow-up / positive | Telegram alert + Google Sheets updated |
+| Rejection | Google Sheets updated, no Telegram |
+| Auto-reply / unrelated | Ignored |
+
+> **Requires** the job status = `applied` in the database. Set it by sending `/applied CompanyName` to your Telegram bot after you submit an application.
+
+### Yahoo Mail setup
+
+1. Yahoo Mail → **Settings → Security → Generate app password** (choose "Other app")
+2. Add to `.env`:
+   ```
+   EMAIL_CHECK_ENABLED=true
+   YAHOO_EMAIL=you@yahoo.com
+   YAHOO_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+   # EMAIL_IMAP_HOST and EMAIL_IMAP_PORT can be omitted — Yahoo defaults are built in
+   ```
+
+### Gmail setup
+
+1. Google Account → **Security → 2-Step Verification → App Passwords** → generate one (choose "Other")
+2. Add to `.env`:
+   ```
+   EMAIL_CHECK_ENABLED=true
+   YAHOO_EMAIL=you@gmail.com
+   YAHOO_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+   EMAIL_IMAP_HOST=imap.gmail.com
+   EMAIL_IMAP_PORT=993
+   ```
+
+> Gmail requires IMAP to be enabled: Gmail Settings → See all settings → Forwarding and POP/IMAP → Enable IMAP
+
+### Outlook / Hotmail setup
+
+```
+EMAIL_CHECK_ENABLED=true
+YAHOO_EMAIL=you@outlook.com
+YAHOO_APP_PASSWORD=your-password
+EMAIL_IMAP_HOST=outlook.office365.com
+EMAIL_IMAP_PORT=993
+```
 
 ---
 

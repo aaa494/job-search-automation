@@ -232,6 +232,41 @@ class LinkedInScraper(BaseScraper):
             location = data.get("location", "")
             description = data.get("description", "")
 
+            # LinkedIn privacy consent modal sets h1 to this string — navigate to job URL to get real title
+            if "linkedin respects your privacy" in title.lower() or not title:
+                try:
+                    await page.goto(job_url, wait_until="domcontentloaded")
+                    await self.human_delay(2000, 3000)
+                    data2 = await page.evaluate("""
+                        () => {
+                            const titleEl = document.querySelector(
+                                '.job-details-jobs-unified-top-card__job-title h1, ' +
+                                '.jobs-unified-top-card__job-title h1, ' +
+                                'h1.t-24'
+                            );
+                            const companyEl = document.querySelector(
+                                '.job-details-jobs-unified-top-card__company-name a, ' +
+                                '.jobs-unified-top-card__company-name a, ' +
+                                '.topcard__org-name-link'
+                            );
+                            const descEl = document.querySelector(
+                                '#job-details, .jobs-description__content, article.jobs-description'
+                            );
+                            return {
+                                title: titleEl ? titleEl.innerText.trim() : '',
+                                company: companyEl ? companyEl.innerText.trim() : '',
+                                description: descEl ? descEl.innerText.trim() : '',
+                            };
+                        }
+                    """)
+                    if data2.get("title") and "linkedin respects your privacy" not in data2["title"].lower():
+                        title = data2["title"]
+                        company = company or data2.get("company", "")
+                        description = data2.get("description", "") or description
+                    log.info("[LinkedIn] Re-fetched job page for real title: %r", title)
+                except Exception as e:
+                    log.debug("[LinkedIn] Re-fetch for title failed: %s", e)
+
             log.debug("[LinkedIn] Panel extracted title=%r company=%r desc_len=%d",
                       title, company, len(description))
 
