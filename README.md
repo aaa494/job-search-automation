@@ -629,3 +629,31 @@ scp cookies/linkedin.json cookies/indeed.json user@server:/path/to/app/cookies/
 - `cookies/` — browser sessions, in `.gitignore`
 - `user_config.json` — personal settings, in `.gitignore`
 - No passwords stored — only session cookies and OAuth tokens
+
+---
+
+## Uninstall — Remove Everything from the Server
+
+Run these commands to completely stop and remove the script and all its data:
+
+```bash
+# 1. Stop and disable both services
+sudo systemctl stop jobsearch-scheduler jobsearch-bot
+sudo systemctl disable jobsearch-scheduler jobsearch-bot
+sudo rm /etc/systemd/system/jobsearch-scheduler.service
+sudo rm /etc/systemd/system/jobsearch-bot.service
+sudo systemctl daemon-reload
+
+# 2. Delete the application directory (code, DB, logs, output, cookies)
+rm -rf /path/to/app
+
+# 3. Remove Playwright browser cache (~300 MB)
+rm -rf ~/.cache/ms-playwright
+
+# 4. Remove Python package cache (optional)
+rm -rf ~/.cache/pip
+```
+
+> If you authorized Google Drive/Sheets, revoke access at:
+> **myaccount.google.com → Security → Third-party apps with account access**
+> Find your GCP project name and click "Remove access".
